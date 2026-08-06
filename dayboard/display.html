@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Today</title>
+<style>
+  /* Designed to be read, not used. No buttons, no links, nothing to tap by
+     accident, nothing that changes position between refreshes. Light
+     background because these screens sit in daylit rooms and older eyes read
+     dark-on-light more comfortably there. */
+  :root {
+    --ink: #1a1a1a;
+    --paper: #fbf8f2;
+    --quiet: #5a5a5a;
+    --rule: #d8d2c6;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: Georgia, "Times New Roman", serif;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 4vmin;
+    -webkit-font-smoothing: antialiased;
+  }
+  main { width: 100%; max-width: 30ch; }
+
+  .clock {
+    font-size: clamp(3rem, 13vmin, 9rem);
+    font-weight: 700;
+    line-height: 1;
+    letter-spacing: -0.02em;
+  }
+  .heading {
+    font-size: clamp(1.6rem, 6vmin, 4rem);
+    font-weight: 400;
+    color: var(--quiet);
+    margin-top: 0.2em;
+    padding-bottom: 0.5em;
+    border-bottom: 3px solid var(--rule);
+  }
+  ul { list-style: none; margin-top: 0.7em; }
+  li {
+    font-size: clamp(1.5rem, 5.2vmin, 3.4rem);
+    line-height: 1.35;
+    padding: 0.45em 0;
+    border-bottom: 1px solid var(--rule);
+  }
+  li:last-child { border-bottom: none; }
+  .empty {
+    font-size: clamp(1.3rem, 4.4vmin, 2.8rem);
+    color: var(--quiet);
+    margin-top: 1em;
+    font-style: italic;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --ink: #f2ede3; --paper: #16150f; --quiet: #a9a294; --rule: #3a372e; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <div class="clock" id="clock">&nbsp;</div>
+  <div class="heading" id="heading">&nbsp;</div>
+  <ul id="lines"></ul>
+  <p class="empty" id="empty" hidden>Nothing to show yet today.</p>
+</main>
+
+<script>
+// The screen must never show a stale answer as if it were current. If the
+// server cannot be reached, the lines are cleared rather than left frozen:
+// yesterday's "pill box was opened at 8:15" is worse than a blank screen.
+async function refresh() {
+  const clock = document.getElementById('clock');
+  const now = new Date();
+  let h = now.getHours() % 12 || 12;
+  clock.textContent = h + ':' + String(now.getMinutes()).padStart(2, '0') +
+                      (now.getHours() < 12 ? 'am' : 'pm');
+
+  try {
+    const res = await fetch('/api/board', { cache: 'no-store' });
+    if (!res.ok) throw new Error(res.status);
+    const board = await res.json();
+
+    document.getElementById('heading').textContent = board.heading;
+    const ul = document.getElementById('lines');
+    ul.replaceChildren();
+    for (const line of board.lines) {
+      const li = document.createElement('li');
+      li.textContent = line;
+      ul.appendChild(li);
+    }
+    document.getElementById('empty').hidden = board.lines.length > 0;
+  } catch (err) {
+    document.getElementById('lines').replaceChildren();
+    document.getElementById('heading').textContent =
+      now.toLocaleDateString(undefined, { weekday: 'long' });
+    document.getElementById('empty').hidden = false;
+  }
+}
+
+refresh();
+setInterval(refresh, 20000);
+</script>
+</body>
+</html>
