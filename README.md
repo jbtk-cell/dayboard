@@ -86,13 +86,41 @@ lunch has happened. In `serve` the clock is real, and it comes from the server
 rather than the browser, so the time on screen can never disagree with the
 events the screen is reporting.
 
-## Running it for real
+## The console
 
 ```sh
 uv run python -m dayboard.cli serve
+# her screen:  http://localhost:8080
+# the console: http://localhost:8080/console
 ```
 
-Then point sensors at it. Anything that can make an HTTP request works:
+The console is where everything is set up and nothing is guessed at. It is laid
+out as a medication chart, because that is the paper artifact it replaces and
+because a drug chart already makes the distinction this project is built on:
+what was observed, and what was merely noted.
+
+- **Today's record** is every sensor event, with times in a monospace column.
+  Rows can be added by hand to try something out, or removed. A pill box opened
+  more than once is flagged `repeat`.
+- **Coming up** is the appointments she will see, written in the words she would
+  use.
+- **Sensors** maps your sensor ids onto what they watch, so `meds_tin` works as
+  well as `pill_box`.
+- **What she sees** is the actual screen, live, beside the controls.
+- **What supports each line** shows every line with its basis and the exact
+  sensors behind it. If a line is on her screen, this says why.
+
+The scrubber under the preview runs the whole day. Drag it and the screen shows
+what she would see at that moment, with tick marks where events landed. It is
+the fastest way to answer the question that matters when setting this up: what
+will she see at three in the afternoon if the pill box never opens?
+
+The day is written to `~/.dayboard` as it changes, one file per day, so a reboot
+at noon does not erase the morning.
+
+## Running it for real
+
+Point sensors at it. Anything that can make an HTTP request works:
 
 ```sh
 curl -X POST http://<host>:8080/event \
@@ -159,7 +187,7 @@ actually useful to her is an open question that only she can answer.
 ## Tests
 
 ```sh
-uv run pytest          # 47 tests
+uv run pytest          # 63 tests
 ```
 
 They are mostly not ordinary unit tests. Each one corresponds to a specific way

@@ -10,9 +10,11 @@ from __future__ import annotations
 
 import argparse
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime
+from pathlib import Path
 
 from dayboard import server
+from dayboard.store import Store
 from dayboard.board import build, explain
 from dayboard.events import EventLog
 from dayboard.simulate import SCENARIOS, build_scenario
@@ -60,6 +62,9 @@ def cmd_demo(args) -> int:
 
 
 def cmd_serve(args) -> int:
+    store = Store(Path(args.data) if args.data else None)
+    server.load_from(store)
+    print(f"data: {store.dir}")
     server.serve(args.host, args.port)
     return 0
 
@@ -80,9 +85,10 @@ def main(argv=None) -> int:
     demo.add_argument("--port", type=int, default=8080)
     demo.set_defaults(func=cmd_demo)
 
-    run = sub.add_parser("serve", help="serve the screen, real sensors only")
+    run = sub.add_parser("serve", help="serve the screen and console")
     run.add_argument("--host", default="0.0.0.0")
     run.add_argument("--port", type=int, default=8080)
+    run.add_argument("--data", default="", help="where to keep the day (default ~/.dayboard)")
     run.set_defaults(func=cmd_serve)
 
     args = parser.parse_args(argv)

@@ -43,6 +43,19 @@ def logical_date(moment: datetime) -> date:
 
 
 _ONE_DAY = __import__("datetime").timedelta(days=1)
+_ONE_MINUTE = __import__("datetime").timedelta(minutes=1)
+
+
+def day_end(moment: datetime) -> datetime:
+    """The last instant of the logical day containing `moment`.
+
+    Needed because `moment.replace(hour=23, minute=59)` is not it. Between
+    midnight and DAY_START the logical day is the previous calendar date, so
+    that replace lands on the *next* logical day and the console ends up listing
+    tomorrow's events beside today's screen.
+    """
+    day = logical_date(moment)
+    return datetime.combine(day + _ONE_DAY, DAY_START) - _ONE_MINUTE
 
 
 def part_of_day(moment: datetime) -> str:
@@ -85,6 +98,20 @@ class EventLog:
     def extend(self, events) -> None:
         for event in events:
             self.add(event)
+
+    @property
+    def day(self):
+        """The logical day this log holds, or None if empty.
+
+        Persistence reads the day from here rather than from the wall clock.
+        Deriving it from `datetime.now()` meant that adding an event while
+        viewing a different day wrote it to the wrong file, or to no file at
+        all -- a silent way to lose exactly the morning this is meant to keep.
+        """
+        return self._day
+
+    def all(self) -> list[Event]:
+        return list(self._events)
 
     def since_day_start(self, now: datetime) -> list[Event]:
         day = logical_date(now)

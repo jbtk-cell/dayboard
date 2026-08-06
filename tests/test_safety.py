@@ -171,3 +171,17 @@ class TestNothingUnsafeEverReachesTheScreen:
                 if claim.basis is Basis.OBSERVED:
                     assert not (words & BODILY_VERBS)
             assert len(board.lines) <= MAX_LINES
+
+
+class TestTheHeadingAgreesWithTheLines:
+    def test_after_midnight_the_heading_names_the_logical_day(self):
+        """At 1am Thursday the events shown are Wednesday's, so the heading
+        must say Wednesday. Found by screenshotting the console at 1am."""
+        from dayboard.rules import day_heading
+        one_am_thursday = datetime(2026, 8, 6, 1, 8)
+        assert one_am_thursday.strftime("%A") == "Thursday"
+        assert day_heading(one_am_thursday) == "Wednesday night"
+
+    def test_during_the_day_heading_is_unchanged(self):
+        from dayboard.rules import day_heading
+        assert day_heading(datetime(2026, 8, 6, 13, 0)) == "Thursday afternoon"

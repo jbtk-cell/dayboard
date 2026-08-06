@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
 from dayboard.claims import Claim, inferred, observed, scheduled
-from dayboard.events import EventLog, part_of_day, spoken_time
+from dayboard.events import EventLog, logical_date, part_of_day, spoken_time
 
 MEAL_WINDOWS = (
     ("breakfast", 6, 11),
@@ -120,8 +120,15 @@ def schedule_claims(home: Home, now: datetime, horizon_hours: int = 14) -> list[
 
 
 def day_heading(now: datetime) -> str:
-    """The anchor line. This alone is what a dementia day clock provides."""
-    return f"{now.strftime('%A')} {part_of_day(now)}"
+    """The anchor line. This alone is what a dementia day clock provides.
+
+    The weekday comes from the logical day, not the calendar date. At 1am on a
+    Thursday the calendar says Thursday, but the pills on the screen were taken
+    during Wednesday and everybody in the house would call it Wednesday night.
+    Naming it Thursday put the heading and the lines beneath it on different
+    days, which is the one thing a memory aid cannot afford.
+    """
+    return f"{logical_date(now).strftime('%A')} {part_of_day(now)}"
 
 
 def all_claims(log: EventLog, home: Home, now: datetime) -> list[Claim]:

@@ -1,0 +1,451 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dayboard console</title>
+<style>
+/* Prescription safety paper. The console is back-of-house instrumentation and
+   is meant to look unlike the screen it controls, which is domestic and serif.
+   System fonts only: this runs on a Pi with no internet, so nothing may be
+   fetched. Monospace carries every time and sensor id, because those are chart
+   data and want to align in a column the way a drug chart's times do. */
+:root {
+  --paper:    #e7eee8;
+  --card:     #f8fbf7;
+  --ink:      #14201a;
+  --soft:     #56655d;
+  --rule:     #c2d1c5;
+  --observed: #1c6b46;
+  --inferred: #8f620d;
+  --scheduled:#3a5a8c;
+  --alert:    #a12a2c;
+
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 15px;
+  line-height: 1.5;
+  padding: 0 0 4rem;
+}
+:focus-visible { outline: 2px solid var(--scheduled); outline-offset: 2px; }
+
+/* ---- header ---- */
+.masthead {
+  display: flex; align-items: baseline; gap: 1rem; flex-wrap: wrap;
+  padding: 1.4rem clamp(1rem, 4vw, 2.5rem) 1.1rem;
+  border-bottom: 2px solid var(--ink);
+}
+.masthead h1 {
+  font-size: 1.05rem; font-weight: 650;
+  letter-spacing: 0.14em; text-transform: uppercase;
+}
+.masthead .date { font-family: var(--mono); color: var(--soft); font-size: 0.85rem; }
+.masthead .spacer { flex: 1; }
+.masthead a { color: var(--scheduled); font-size: 0.85rem; }
+
+/* ---- two columns ---- */
+.layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 21rem);
+  gap: clamp(1.25rem, 3vw, 2.75rem);
+  padding: clamp(1.25rem, 3vw, 2.25rem) clamp(1rem, 4vw, 2.5rem);
+  align-items: start;
+}
+@media (max-width: 860px) { .layout { grid-template-columns: 1fr; } }
+
+.panel { margin-bottom: 2.25rem; }
+.panel-head {
+  display: flex; align-items: baseline; gap: 0.6rem;
+  font-size: 0.7rem; font-weight: 700;
+  letter-spacing: 0.16em; text-transform: uppercase;
+  color: var(--soft);
+  padding-bottom: 0.4rem;
+  border-bottom: 1px solid var(--rule);
+}
+.panel-head .count { font-family: var(--mono); font-weight: 400; letter-spacing: 0; }
+
+/* ---- the chart ---- */
+.chart { width: 100%; border-collapse: collapse; }
+.chart tr { border-bottom: 1px solid var(--rule); }
+.chart tr.is-future { opacity: 0.42; }
+.chart td { padding: 0.5rem 0.4rem; vertical-align: baseline; }
+.chart td.t { font-family: var(--mono); font-size: 0.86rem; width: 5.4rem; white-space: nowrap; }
+.chart td.s { font-family: var(--mono); font-size: 0.86rem; }
+.chart td.v { color: var(--soft); font-size: 0.86rem; }
+.chart td.x { width: 2rem; text-align: right; }
+.chart .flag {
+  display: inline-block; margin-left: 0.4rem; font-size: 0.68rem;
+  font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--alert);
+}
+.empty { color: var(--soft); font-style: italic; padding: 0.9rem 0.4rem; }
+
+.iconbtn {
+  border: 0; background: none; cursor: pointer; color: var(--soft);
+  font-size: 1.05rem; line-height: 1; padding: 0.15rem 0.3rem; border-radius: 3px;
+}
+.iconbtn:hover { color: var(--alert); background: #0000000d; }
+
+/* ---- inline forms ---- */
+.entry { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.9rem; }
+.entry input, .entry select {
+  font-family: var(--mono); font-size: 0.86rem;
+  padding: 0.42rem 0.55rem;
+  border: 1px solid var(--rule); border-radius: 3px;
+  background: var(--card); color: var(--ink);
+}
+.entry input.grow { flex: 1; min-width: 8rem; font-family: var(--sans); }
+.entry input.t { width: 5.6rem; }
+.entry button {
+  font-family: var(--sans); font-size: 0.82rem; font-weight: 600;
+  padding: 0.42rem 0.95rem; cursor: pointer;
+  border: 1px solid var(--ink); border-radius: 3px;
+  background: var(--ink); color: var(--card);
+}
+.entry button:hover { background: #000; }
+
+.sensorgrid { display: grid; gap: 0.55rem; margin-top: 0.8rem; }
+.sensorrow { display: grid; grid-template-columns: 9rem minmax(0,1fr); gap: 0.7rem; align-items: center; }
+.sensorrow label { font-size: 0.8rem; color: var(--soft); }
+.sensorrow input {
+  font-family: var(--mono); font-size: 0.85rem; width: 100%;
+  padding: 0.38rem 0.5rem; border: 1px solid var(--rule);
+  border-radius: 3px; background: var(--card); color: var(--ink);
+}
+
+.note { color: var(--soft); font-size: 0.8rem; margin-top: 0.75rem; }
+.error { color: var(--alert); font-size: 0.82rem; margin-top: 0.6rem; min-height: 1.2em; }
+
+/* ---- the preview, pinned ---- */
+.aside { position: sticky; top: 1.25rem; }
+.screen {
+  background: #fbf8f2; color: #1a1a1a;
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  padding: 1.5rem 1.4rem 1.7rem;
+  font-family: Georgia, "Times New Roman", serif;
+  box-shadow: 0 1px 0 #ffffffcc inset, 0 2px 10px #16201a12;
+}
+.screen .clock { font-size: 2.6rem; font-weight: 700; line-height: 1; letter-spacing: -0.02em; }
+.screen .heading { font-size: 1.15rem; color: #5a5a5a; margin-top: 0.15em;
+                   padding-bottom: 0.55em; border-bottom: 2px solid #d8d2c6; }
+.screen ul { list-style: none; margin-top: 0.55em; }
+.screen li { font-size: 1.02rem; line-height: 1.32; padding: 0.44em 0;
+             border-bottom: 1px solid #ece6da; }
+.screen li:last-child { border-bottom: none; }
+.screen .none { color: #5a5a5a; font-style: italic; margin-top: 0.7em; font-size: 0.95rem; }
+
+.caption {
+  font-size: 0.7rem; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--soft); font-weight: 700; margin: 0 0 0.5rem;
+}
+
+/* ---- the scrubber: the day as a control ---- */
+.scrub { margin-top: 1.4rem; }
+.track { position: relative; height: 22px; margin-bottom: -4px; }
+.tick {
+  position: absolute; top: 6px; width: 2px; height: 11px;
+  background: var(--observed); border-radius: 1px;
+}
+.tick.sched { background: var(--scheduled); top: 3px; height: 17px; }
+.tick.pill  { background: var(--alert); top: 1px; height: 19px; width: 3px; }
+.slider { width: 100%; accent-color: var(--ink); }
+.hours { display: flex; justify-content: space-between;
+         font-family: var(--mono); font-size: 0.68rem; color: var(--soft); margin-top: 0.1rem; }
+
+/* ---- basis legend / audit ---- */
+.audit { margin-top: 1.5rem; }
+.auditrow { display: flex; gap: 0.55rem; align-items: baseline;
+            padding: 0.42rem 0; border-bottom: 1px solid var(--rule); font-size: 0.8rem; }
+.auditrow:last-child { border-bottom: none; }
+.chip {
+  font-family: var(--mono); font-size: 0.62rem; letter-spacing: 0.06em;
+  text-transform: uppercase; padding: 0.12rem 0.36rem; border-radius: 2px;
+  border: 1px solid currentColor; white-space: nowrap; flex: none;
+}
+.chip.observed  { color: var(--observed); }
+.chip.inferred  { color: var(--inferred); }
+.chip.scheduled { color: var(--scheduled); }
+.auditrow .src { font-family: var(--mono); color: var(--soft); font-size: 0.72rem; }
+
+@media (prefers-reduced-motion: no-preference) {
+  .screen li { transition: opacity 140ms ease; }
+}
+</style>
+</head>
+<body>
+
+<header class="masthead">
+  <h1>dayboard console</h1>
+  <span class="date" id="today">&nbsp;</span>
+  <span class="spacer"></span>
+  <a href="/" target="_blank">Open her screen &rarr;</a>
+</header>
+
+<div class="layout">
+  <main>
+    <section class="panel">
+      <div class="panel-head">Today's record <span class="count" id="eventCount"></span></div>
+      <table class="chart"><tbody id="events"></tbody></table>
+      <form class="entry" id="eventForm">
+        <input class="t" name="at" id="evTime" placeholder="08:15" inputmode="numeric" required>
+        <input name="sensor" id="evSensor" placeholder="pill_box" required>
+        <select name="state" id="evState">
+          <option value="opened">opened</option>
+          <option value="closed">closed</option>
+          <option value="on">on</option>
+          <option value="off">off</option>
+          <option value="motion">motion</option>
+        </select>
+        <button type="submit">Add what happened</button>
+      </form>
+      <p class="note">Sensors post here automatically. Add rows by hand to try
+        something out, or to record what a sensor could not see.</p>
+      <p class="error" id="eventError"></p>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">Coming up <span class="count" id="schedCount"></span></div>
+      <table class="chart"><tbody id="schedule"></tbody></table>
+      <form class="entry" id="schedForm">
+        <input class="t" name="at" id="scTime" placeholder="16:00" inputmode="numeric" required>
+        <input class="grow" name="what" id="scWhat" placeholder="Sarah is coming" required>
+        <button type="submit">Add appointment</button>
+      </form>
+      <p class="note">Appointments are shown to her as they are written, so write
+        them the way she would say them.</p>
+      <p class="error" id="schedError"></p>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">Sensors</div>
+      <form class="sensorgrid" id="sensorForm">
+        <div class="sensorrow"><label for="snPill">Pill box</label>
+          <input id="snPill" name="pill_box"></div>
+        <div class="sensorrow"><label for="snDoor">Front door</label>
+          <input id="snDoor" name="front_door"></div>
+        <div class="sensorrow"><label for="snMotion">Kitchen motion</label>
+          <input id="snMotion" name="kitchen_motion"></div>
+        <div class="sensorrow"><label for="snKitchen">Kitchen, comma separated</label>
+          <input id="snKitchen" name="kitchen_sensors"></div>
+        <div class="entry"><button type="submit">Save sensor names</button></div>
+      </form>
+      <p class="note">These are the ids your sensors report. Two different
+        kitchen sensors must fire before a meal is mentioned at all.</p>
+      <p class="error" id="sensorError"></p>
+    </section>
+  </main>
+
+  <aside class="aside">
+    <p class="caption" id="previewCaption">What she sees</p>
+    <div class="screen">
+      <div class="clock" id="pvClock">&nbsp;</div>
+      <div class="heading" id="pvHeading">&nbsp;</div>
+      <ul id="pvLines"></ul>
+      <p class="none" id="pvNone" hidden>Nothing to show yet today.</p>
+    </div>
+
+    <div class="scrub">
+      <div class="track" id="track"></div>
+      <input class="slider" type="range" id="slider" min="0" max="1439" step="5"
+             aria-label="Time of day to preview">
+      <div class="hours"><span>12am</span><span>6am</span><span>12pm</span><span>6pm</span><span>12am</span></div>
+      <p class="note" id="scrubNote">Drag to see the screen at any time of day.</p>
+    </div>
+
+    <div class="audit">
+      <p class="caption">What supports each line</p>
+      <div id="auditRows"></div>
+    </div>
+  </aside>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let state = null;
+let viewMinutes = null;   // null means "follow the real clock"
+
+function isoForMinutes(min) {
+  const base = state ? state.now.slice(0, 10) : new Date().toISOString().slice(0, 10);
+  const h = String(Math.floor(min / 60)).padStart(2, '0');
+  const m = String(min % 60).padStart(2, '0');
+  return `${base}T${h}:${m}`;
+}
+
+async function load(opts = {}) {
+  const url = viewMinutes === null
+    ? '/api/day'
+    : '/api/day?at=' + encodeURIComponent(isoForMinutes(viewMinutes));
+  const res = await fetch(url, { cache: 'no-store' });
+  state = await res.json();
+  render();
+}
+
+async function post(path, body, errorEl) {
+  errorEl.textContent = '';
+  const at = viewMinutes === null ? '' : '?at=' + encodeURIComponent(isoForMinutes(viewMinutes));
+  const res = await fetch(path + at, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json();
+  if (!res.ok) { errorEl.textContent = data.error || 'That did not work.'; return false; }
+  state = data;
+  render();
+  return true;
+}
+
+function render() {
+  const nowMin = Number(state.now.slice(11, 13)) * 60 + Number(state.now.slice(14, 16));
+  if (viewMinutes === null) $('slider').value = nowMin;
+  // The logical day, not the calendar date: before 4am they differ, and the
+  // record below belongs to the logical one.
+  $('today').textContent = new Date(state.logical_day + 'T12:00').toLocaleDateString(
+    undefined, { weekday: 'long', day: 'numeric', month: 'long' });
+
+  // the screen
+  const b = state.board;
+  $('pvClock').textContent = b.clock;
+  $('pvHeading').textContent = b.heading;
+  const ul = $('pvLines'); ul.replaceChildren();
+  for (const line of b.lines) {
+    const li = document.createElement('li'); li.textContent = line; ul.appendChild(li);
+  }
+  $('pvNone').hidden = b.lines.length > 0;
+  $('previewCaption').textContent =
+    viewMinutes === null ? 'What she sees now' : 'What she sees at ' + b.clock;
+
+  // audit
+  const audit = $('auditRows'); audit.replaceChildren();
+  if (!b.audit.length) {
+    const p = document.createElement('p');
+    p.className = 'note'; p.textContent = 'No lines yet, so nothing to support.';
+    audit.appendChild(p);
+  }
+  for (const a of b.audit) {
+    const row = document.createElement('div'); row.className = 'auditrow';
+    const chip = document.createElement('span');
+    chip.className = 'chip ' + a.basis; chip.textContent = a.basis;
+    const txt = document.createElement('span');
+    txt.textContent = a.text;
+    const src = document.createElement('span');
+    src.className = 'src'; src.textContent = a.sensors.join(' ') || 'calendar';
+    row.append(chip, txt, src);
+    audit.appendChild(row);
+  }
+
+  // today's record
+  const tb = $('events'); tb.replaceChildren();
+  $('eventCount').textContent = state.events.length ? state.events.length : '';
+  const pillOpenings = state.events.filter(
+    e => e.sensor === state.sensors.pill_box && e.state === 'opened').length;
+  if (!state.events.length) {
+    tb.innerHTML = '<tr><td class="empty" colspan="4">Nothing recorded yet today.</td></tr>';
+  }
+  state.events.forEach((e, i) => {
+    const tr = document.createElement('tr');
+    if (e.future) tr.className = 'is-future';
+    const isPill = e.sensor === state.sensors.pill_box && e.state === 'opened';
+    tr.innerHTML =
+      `<td class="t">${e.clock}</td>` +
+      `<td class="s">${e.sensor}${isPill && pillOpenings > 1
+        ? '<span class="flag">repeat</span>' : ''}</td>` +
+      `<td class="v">${e.state}</td>`;
+    const x = document.createElement('td'); x.className = 'x';
+    const btn = document.createElement('button');
+    btn.className = 'iconbtn'; btn.type = 'button';
+    btn.title = 'Remove this row'; btn.setAttribute('aria-label', 'Remove ' + e.sensor);
+    btn.textContent = '×';
+    btn.onclick = () => post('/api/event/delete', { index: i }, $('eventError'));
+    x.appendChild(btn); tr.appendChild(x);
+    tb.appendChild(tr);
+  });
+
+  // coming up
+  const sb = $('schedule'); sb.replaceChildren();
+  $('schedCount').textContent = state.schedule.length ? state.schedule.length : '';
+  if (!state.schedule.length) {
+    sb.innerHTML = '<tr><td class="empty" colspan="3">No appointments today.</td></tr>';
+  }
+  state.schedule.forEach((s, i) => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td class="t">${s.clock}</td><td>${s.what}</td>`;
+    const x = document.createElement('td'); x.className = 'x';
+    const btn = document.createElement('button');
+    btn.className = 'iconbtn'; btn.type = 'button';
+    btn.title = 'Remove'; btn.setAttribute('aria-label', 'Remove ' + s.what);
+    btn.textContent = '×';
+    btn.onclick = () => post('/api/schedule/delete', { index: i }, $('schedError'));
+    x.appendChild(btn); tr.appendChild(x);
+    sb.appendChild(tr);
+  });
+
+  // sensors
+  $('snPill').value = state.sensors.pill_box;
+  $('snDoor').value = state.sensors.front_door;
+  $('snMotion').value = state.sensors.kitchen_motion;
+  $('snKitchen').value = state.sensors.kitchen_sensors.join(', ');
+
+  // scrubber ticks: the day's evidence, on the same axis as the control
+  const track = $('track'); track.replaceChildren();
+  const mark = (min, cls, label) => {
+    const d = document.createElement('div');
+    d.className = 'tick ' + cls;
+    d.style.left = `calc(${(min / 1439) * 100}% - 1px)`;
+    d.title = label;
+    track.appendChild(d);
+  };
+  for (const e of state.events) {
+    const isPill = e.sensor === state.sensors.pill_box && e.state === 'opened';
+    mark(e.minutes, isPill ? 'pill' : '', `${e.clock} ${e.sensor} ${e.state}`);
+  }
+  for (const s of state.schedule) mark(s.minutes, 'sched', `${s.clock} ${s.what}`);
+}
+
+$('slider').addEventListener('input', (ev) => {
+  viewMinutes = Number(ev.target.value);
+  $('scrubNote').textContent = 'Showing a moment in the day. Release to keep looking, or reload to follow the clock.';
+  load();
+});
+
+$('eventForm').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const ok = await post('/api/event', {
+    at: $('evTime').value.trim(),
+    sensor: $('evSensor').value.trim(),
+    state: $('evState').value,
+  }, $('eventError'));
+  if (ok) { $('evTime').value = ''; $('evSensor').value = ''; $('evTime').focus(); }
+});
+
+$('schedForm').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const ok = await post('/api/schedule', {
+    at: $('scTime').value.trim(),
+    what: $('scWhat').value.trim(),
+  }, $('schedError'));
+  if (ok) { $('scTime').value = ''; $('scWhat').value = ''; $('scTime').focus(); }
+});
+
+$('sensorForm').addEventListener('submit', (ev) => {
+  ev.preventDefault();
+  post('/api/sensors', {
+    pill_box: $('snPill').value,
+    front_door: $('snDoor').value,
+    kitchen_motion: $('snMotion').value,
+    kitchen_sensors: $('snKitchen').value.split(',').map(s => s.trim()).filter(Boolean),
+  }, $('sensorError'));
+});
+
+load();
+setInterval(() => { if (viewMinutes === null) load(); }, 20000);
+</script>
+</body>
+</html>
