@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from dayboard.claims import Basis, Claim
-from dayboard.events import EventLog
+from dayboard.events import EventLog, spoken_time
 from dayboard.rules import (
     Home, day_heading, door_claims, meal_claims, pill_box_claims, schedule_claims,
 )
@@ -33,11 +33,16 @@ class Board:
     lines: list[str]
     claims: list[Claim]
     generated_at: datetime
+    clock: str = ""
 
     def as_dict(self) -> dict:
         return {
             "heading": self.heading,
             "lines": self.lines,
+            # The clock comes from here, not from the browser. Two clocks that
+            # can disagree is one clock too many when the whole point is telling
+            # someone what time it is and what has happened by now.
+            "clock": self.clock,
             "generated_at": self.generated_at.isoformat(timespec="seconds"),
             "audit": [
                 {
@@ -77,6 +82,7 @@ def build(log: EventLog, home: Home, now: datetime) -> Board:
         lines=[c.text for c in chosen],
         claims=chosen,
         generated_at=now,
+        clock=spoken_time(now),
     )
 
 

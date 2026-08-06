@@ -51,8 +51,10 @@ def cmd_demo(args) -> int:
     base = datetime.now().replace(hour=9, minute=0, second=0, microsecond=0)
     log, home = _load(args.scenario, base)
     server._log = log
-    server.configure(home)
-    print(f"scenario: {args.scenario}")
+    # Pin the clock inside the simulated day, so the demo shows the same thing
+    # whatever time you happen to run it.
+    server.configure(home, now=base.replace(hour=args.hour, minute=0))
+    print(f"scenario: {args.scenario}, shown as {args.hour}:00 on the simulated day")
     server.serve(args.host, args.port)
     return 0
 
@@ -73,6 +75,7 @@ def main(argv=None) -> int:
 
     demo = sub.add_parser("demo", help="serve the screen with a simulated day")
     demo.add_argument("--scenario", default="ordinary", choices=sorted(SCENARIOS))
+    demo.add_argument("--hour", type=int, default=13, help="hour of the simulated day")
     demo.add_argument("--host", default="127.0.0.1")
     demo.add_argument("--port", type=int, default=8080)
     demo.set_defaults(func=cmd_demo)

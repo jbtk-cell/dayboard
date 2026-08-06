@@ -38,20 +38,31 @@ _lock = threading.Lock()
 _log = EventLog()
 _home = Home()
 
+# Demo mode pins the clock to a moment inside the simulated day. Without this
+# the demo only worked if you happened to run it during daylight hours: the
+# simulated events sat in the future relative to a real 1am, were correctly
+# filtered out, and the screen showed nothing at all.
+_frozen_now: datetime | None = None
 
-def configure(home: Home) -> None:
-    global _home
+
+def configure(home: Home, now: datetime | None = None) -> None:
+    global _home, _frozen_now
     _home = home
+    _frozen_now = now
+
+
+def _clock() -> datetime:
+    return _frozen_now or datetime.now()
 
 
 def record(sensor: str, kind: str, state: str, at: datetime | None = None) -> None:
     with _lock:
-        _log.add(Event(sensor, kind, state, at or datetime.now()))
+        _log.add(Event(sensor, kind, state, at or _clock()))
 
 
 def current_board(now: datetime | None = None):
     with _lock:
-        return build(_log, _home, now or datetime.now())
+        return build(_log, _home, now or _clock())
 
 
 class Handler(BaseHTTPRequestHandler):

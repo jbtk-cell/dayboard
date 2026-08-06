@@ -80,6 +80,12 @@ uv run python -m dayboard.cli demo --scenario double-dose
 # open http://127.0.0.1:8080
 ```
 
+The demo pins its clock to 1pm of the simulated day, so it shows the same thing
+whatever time you run it. `--hour 8` to see the same day earlier on, before
+lunch has happened. In `serve` the clock is real, and it comes from the server
+rather than the browser, so the time on screen can never disagree with the
+events the screen is reporting.
+
 ## Running it for real
 
 ```sh
@@ -153,7 +159,7 @@ actually useful to her is an open question that only she can answer.
 ## Tests
 
 ```sh
-uv run pytest          # 20 tests
+uv run pytest          # 47 tests
 ```
 
 They are mostly not ordinary unit tests. Each one corresponds to a specific way

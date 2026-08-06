@@ -71,46 +71,12 @@
 </main>
 
 <script>
-// The screen must never show a stale answer as if it were current. If the
-// server cannot be reached, the lines are cleared rather than left frozen:
-// yesterday's "pill box was opened at 8:15" is worse than a blank screen.
-async function refresh() {
-  const now = new Date();
-  try {
-    const res = await fetch('/api/board', { cache: 'no-store' });
-    if (!res.ok) throw new Error(res.status);
-    const board = await res.json();
-
-    // The clock comes from the server, which is also what decides which events
-    // count as today. A browser clock could disagree with it, and a screen
-    // showing one time next to another time's answers is worse than useless.
-    document.getElementById('clock').textContent = board.clock;
-    document.getElementById('heading').textContent = board.heading;
-    const ul = document.getElementById('lines');
-    ul.replaceChildren();
-    for (const line of board.lines) {
-      const li = document.createElement('li');
-      li.textContent = line;
-      ul.appendChild(li);
-    }
-    document.getElementById('empty').hidden = board.lines.length > 0;
-  } catch (err) {
-    // Server unreachable. Clear the lines rather than leave them frozen:
-    // this morning's "pill box was opened at 8:15" shown at 9pm is worse than
-    // a blank screen. The browser clock is only trusted for the time itself.
-    document.getElementById('lines').replaceChildren();
-    let h = now.getHours() % 12 || 12;
-    document.getElementById('clock').textContent =
-      h + ':' + String(now.getMinutes()).padStart(2, '0') +
-      (now.getHours() < 12 ? 'am' : 'pm');
-    document.getElementById('heading').textContent =
-      now.toLocaleDateString(undefined, { weekday: 'long' });
-    document.getElementById('empty').hidden = false;
+  document.getElementById('heading').textContent = 'Thursday afternoon';
+  const ul = document.getElementById('lines');
+  for (const line of ['Your pill box was opened at 8:15am.', 'It looks like you had breakfast.', 'It looks like you had lunch.', 'Sarah is coming at 4:00pm.']) {
+    const li = document.createElement('li'); li.textContent = line; ul.appendChild(li);
   }
-}
-
-refresh();
-setInterval(refresh, 20000);
+  document.getElementById('clock').textContent = '1:00pm';
 </script>
 </body>
 </html>
