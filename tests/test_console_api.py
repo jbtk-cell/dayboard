@@ -33,11 +33,13 @@ def api(tmp_path):
     thread.start()
     base = f"http://127.0.0.1:{httpd.server_address[1]}"
 
-    def call(method, path, body=None):
+    def call(method, path, body=None, token=store.token):
         data = json.dumps(body).encode() if body is not None else None
+        headers = {"Content-Type": "application/json"}
+        if token is not None:
+            headers["X-Dayboard-Token"] = token
         req = urllib.request.Request(
-            base + path, data=data, method=method,
-            headers={"Content-Type": "application/json"},
+            base + path, data=data, method=method, headers=headers,
         )
         try:
             with urllib.request.urlopen(req) as resp:
@@ -47,6 +49,7 @@ def api(tmp_path):
             raw = exc.read()
             return exc.code, (json.loads(raw) if raw.startswith(b"{") else raw)
 
+    TestHeaders._base = base
     yield call, store
     httpd.shutdown()
     server.configure(store.load_home(), now=None, store=None)
@@ -179,3 +182,90 @@ class TestDayBoundaryInTheConsole:
         assert written == ["events-2026-08-06.json"]
         reloaded = Store(tmp_path).load_events(datetime(2026, 8, 6, 13, 0))
         assert len(reloaded.all()) == 1
+
+
+class TestAuthorisation:
+    """Anything on the home network can reach this port. A fake pill box event
+    would put a dose she never took onto her screen."""
+
+    def test_writing_without_the_token_is_refused(self, api):
+        call, _ = api
+        status, body = call("POST", f"/api/event?at={AT}",
+                            {"at": "08:15", "sensor": "pill_box", "state": "opened"},
+                            token=None)
+        assert status == 401
+        assert body["error"] == "token required"
+
+    def test_a_wrong_token_is_refused(self, api):
+        call, _ = api
+        status, _b = call("POST", f"/api/event?at={AT}",
+                          {"at": "08:15", "sensor": "pill_box", "state": "opened"},
+                          token="not-the-token")
+        assert status == 401
+
+    def test_the_refused_write_did_not_land(self, api):
+        call, _ = api
+        call("POST", f"/api/event?at={AT}",
+             {"at": "08:15", "sensor": "pill_box", "state": "opened"}, token=None)
+        _s, day = call("GET", f"/api/day?at={AT}")
+        assert day["events"] == []
+
+    def test_the_full_day_log_needs_the_token(self, api):
+        call, _ = api
+        status, _b = call("GET", f"/api/day?at={AT}", token=None)
+        assert status == 401
+
+    def test_her_screen_needs_no_token(self, api):
+        """The tablet on the wall cannot hold a secret, and the four lines on it
+        are visible to anyone already in the room."""
+        call, _ = api
+        status, board = call("GET", "/api/board", token=None)
+        assert status == 200
+        assert "lines" in board
+
+    def test_the_token_can_be_passed_in_the_query(self, api):
+        call, store = api
+        status, _b = call("GET", f"/api/day?at={AT}&token={store.token}", token=None)
+        assert status == 200
+
+
+class TestInputLimits:
+    def test_an_enormous_appointment_is_refused(self, api):
+        """It would be rendered verbatim on her screen."""
+        call, _ = api
+        status, body = call("POST", f"/api/schedule?at={AT}",
+                            {"at": "16:00", "what": "x" * 500})
+        assert status == 400
+        assert "longer than" in body["error"]
+
+    def test_an_enormous_sensor_name_is_refused(self, api):
+        call, _ = api
+        status, body = call("POST", f"/api/event?at={AT}",
+                            {"at": "08:15", "sensor": "s" * 500, "state": "opened"})
+        assert status == 400
+        assert "longer than" in body["error"]
+
+    def test_a_blank_sensor_name_is_refused(self, api):
+        call, _ = api
+        status, _b = call("POST", f"/api/event?at={AT}",
+                          {"at": "08:15", "sensor": "   ", "state": "opened"})
+        assert status == 400
+
+
+class TestHeaders:
+    def test_the_page_may_not_reach_the_internet(self, api, tmp_path):
+        """The privacy promise should be enforced by the browser, not the README."""
+        call, store = api
+        # reach the server directly so response headers are visible
+        _s, _b = call("GET", "/api/board", token=None)
+        import urllib.request
+        base = TestHeaders._base
+        with urllib.request.urlopen(base + "/") as resp:
+            csp = resp.headers.get("Content-Security-Policy", "")
+            perms = resp.headers.get("Permissions-Policy", "")
+            assert "default-src 'none'" in csp
+            assert "connect-src 'self'" in csp
+            assert "frame-ancestors 'none'" in csp
+            assert resp.headers.get("X-Content-Type-Options") == "nosniff"
+            assert resp.headers.get("Referrer-Policy") == "no-referrer"
+            assert "camera=()" in perms and "microphone=()" in perms

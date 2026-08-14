@@ -23,6 +23,7 @@ Stdlib only, so it runs on whatever cheap machine is already in the house.
 from __future__ import annotations
 
 import json
+import secrets
 import threading
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -34,6 +35,13 @@ from dayboard.events import (
 )
 from dayboard.rules import Home
 from dayboard.store import Store
+
+# Caps on anything a caller can name. The appointment text goes onto her wall
+# screen verbatim, so an unbounded string is not just untidy, it destroys the
+# one display she relies on.
+MAX_SENSOR_NAME = 64
+MAX_STATE = 32
+MAX_APPOINTMENT = 120
 
 _lock = threading.Lock()
 _store: Store | None = None
@@ -123,6 +131,15 @@ def _day_payload(at: datetime) -> dict:
         }
 
 
+def _bounded(value, limit: int, what: str) -> str:
+    text = str(value).strip()
+    if not text:
+        raise ValueError(f"{what} cannot be blank")
+    if len(text) > limit:
+        raise ValueError(f"{what} is longer than {limit} characters")
+    return text
+
+
 def _parse_when(value: str | None, at: datetime) -> datetime:
     """Accept a full timestamp or a bare HH:MM against the day being viewed."""
     if not value:
@@ -145,6 +162,21 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        # default-src 'none' is doing real work here rather than ticking a box:
+        # it makes "nothing leaves the building" a property the browser enforces,
+        # not a promise in a README. The camera and microphone denials likewise
+        # hold the line the design already drew.
+        self.send_header(
+            "Content-Security-Policy",
+            "default-src 'none'; style-src 'unsafe-inline'; "
+            "script-src 'unsafe-inline'; connect-src 'self'; "
+            "img-src 'self' data:; base-uri 'none'; form-action 'none'; "
+            "frame-ancestors 'none'",
+        )
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("Permissions-Policy",
+                         "camera=(), microphone=(), geolocation=()")
         self.end_headers()
         self.wfile.write(body)
 
@@ -154,6 +186,27 @@ class Handler(BaseHTTPRequestHandler):
     def _page(self, name: str) -> None:
         self._send(200, (Path(__file__).parent / name).read_bytes(),
                    "text/html; charset=utf-8")
+
+    def _authorised(self) -> bool:
+        """Writes and the full day log need the shared token; her screen does not.
+
+        The split is deliberate. `/` and `/api/board` show the four lines she can
+        read off the wall anyway, and the tablet showing them cannot hold a
+        secret. `/api/day`, `/audit` and every write expose or change the whole
+        record, which is where both the privacy and the safety risk live.
+        """
+        if _store is None:
+            return True  # demo and tests run without a store, so without a token
+        expected = _store.token
+        supplied = self.headers.get("X-Dayboard-Token", "")
+        if not supplied:
+            _, _, query = self.path.partition("?")
+            for part in query.split("&"):
+                key, _, value = part.partition("=")
+                if key == "token":
+                    supplied = value
+                    break
+        return secrets.compare_digest(supplied, expected)
 
     def _at(self) -> datetime:
         _, _, query = self.path.partition("?")
@@ -171,12 +224,22 @@ class Handler(BaseHTTPRequestHandler):
         if route in ("/", "/index.html"):
             self._page("display.html")
         elif route == "/console":
+            if not self._authorised():
+                self._send(401, b"Open the console with the link printed when "
+                                b"dayboard started.", "text/plain")
+                return
             self._page("console.html")
         elif route == "/api/board":
             self._json(200, current_board(self._at()).as_dict())
         elif route == "/api/day":
+            if not self._authorised():
+                self._json(401, {"error": "token required"})
+                return
             self._json(200, _day_payload(self._at()))
         elif route == "/audit":
+            if not self._authorised():
+                self._send(401, b"token required", "text/plain")
+                return
             self._send(200, explain(current_board(self._at())).encode(),
                        "text/plain; charset=utf-8")
         else:
@@ -190,6 +253,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         route = self.path.split("?", 1)[0]
+        if not self._authorised():
+            self._json(401, {"error": "token required"})
+            return
         try:
             body = self._body()
         except (json.JSONDecodeError, ValueError) as exc:
@@ -199,8 +265,9 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if route in ("/event", "/api/event"):
                 at = _parse_when(body.get("at"), self._at())
-                record(str(body["sensor"]), str(body.get("kind", "contact")),
-                       str(body["state"]), at)
+                record(_bounded(body["sensor"], MAX_SENSOR_NAME, "sensor name"),
+                       _bounded(body.get("kind", "contact"), MAX_STATE, "kind"),
+                       _bounded(body["state"], MAX_STATE, "state"), at)
             elif route == "/api/event/delete":
                 self._delete_event(int(body["index"]))
             elif route == "/api/schedule":
@@ -229,9 +296,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _add_schedule(self, body: dict) -> None:
         when = _parse_when(str(body["at"]), self._at())
-        what = str(body["what"]).strip()
-        if not what:
-            raise ValueError("an appointment needs a description")
+        what = _bounded(body["what"], MAX_APPOINTMENT, "an appointment description")
         with _lock:
             _home.schedule.append((when, what))
             _home.schedule.sort()
@@ -247,16 +312,16 @@ class Handler(BaseHTTPRequestHandler):
 
     def _set_sensors(self, body: dict) -> None:
         with _lock:
-            if "pill_box" in body:
-                _home.pill_box = str(body["pill_box"]).strip() or _home.pill_box
-            if "front_door" in body:
-                _home.front_door = str(body["front_door"]).strip() or _home.front_door
-            if "kitchen_motion" in body:
-                _home.kitchen_motion = (
-                    str(body["kitchen_motion"]).strip() or _home.kitchen_motion
-                )
+            for field in ("pill_box", "front_door", "kitchen_motion"):
+                raw = str(body.get(field, "")).strip()
+                if raw:
+                    setattr(_home, field,
+                            _bounded(raw, MAX_SENSOR_NAME, f"{field} name"))
             if "kitchen_sensors" in body:
-                names = [str(s).strip() for s in body["kitchen_sensors"] if str(s).strip()]
+                names = [
+                    _bounded(s, MAX_SENSOR_NAME, "kitchen sensor name")
+                    for s in body["kitchen_sensors"] if str(s).strip()
+                ]
                 if names:
                     _home.kitchen_sensors = tuple(names)
             _persist()
@@ -264,9 +329,16 @@ class Handler(BaseHTTPRequestHandler):
 
 def serve(host: str = "0.0.0.0", port: int = 8080) -> None:
     server = ThreadingHTTPServer((host, port), Handler)
-    print(f"dayboard is showing at http://{host}:{port}")
-    print(f"console:  http://{host}:{port}/console")
-    print("Everything stays on this machine. Ctrl-C to stop.")
+    shown = "localhost" if host in ("0.0.0.0", "") else host
+    # flush: under systemd or a redirect this is block-buffered, and the
+    # token would never reach whoever needs it.
+    print(f"her screen:  http://{shown}:{port}", flush=True)
+    if _store is not None:
+        print(f"console:     http://{shown}:{port}/console?token={_store.token}", flush=True)
+        print(f"sensors:     send header  X-Dayboard-Token: {_store.token}", flush=True)
+    else:
+        print(f"console:     http://{shown}:{port}/console", flush=True)
+    print("Everything stays on this machine. Ctrl-C to stop.", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

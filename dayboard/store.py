@@ -27,6 +27,37 @@ class Store:
     def __init__(self, directory: Path | None = None) -> None:
         self.dir = Path(directory or DEFAULT_DIR)
         self.dir.mkdir(parents=True, exist_ok=True)
+        # Her day is health-adjacent and lives on a shared family machine.
+        # Owner-only is the proportionate answer; inventing a cipher here would
+        # be worse than none, because the key would sit in the same directory.
+        try:
+            self.dir.chmod(0o700)
+        except OSError:
+            pass
+
+    @property
+    def token(self) -> str:
+        """A shared secret for writing, made once and kept owner-readable.
+
+        Without it, anything on the home network can POST "pill_box opened" and
+        the screen will tell her she took a dose she never took. Every other
+        rule in this project is about not asserting more than the sensors
+        support; an open write endpoint hands that guarantee to the network.
+        """
+        path = self.dir / "token"
+        if path.exists():
+            existing = path.read_text().strip()
+            if existing:
+                return existing
+        import secrets
+
+        value = secrets.token_urlsafe(18)
+        path.write_text(value)
+        try:
+            path.chmod(0o600)
+        except OSError:
+            pass
+        return value
 
     # ---- events, one file per logical day -------------------------------
 

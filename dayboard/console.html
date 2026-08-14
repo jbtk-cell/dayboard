@@ -268,8 +268,39 @@ body {
 
 <script>
 const $ = (id) => document.getElementById(id);
+
+// The console is opened from the link dayboard prints at startup, which carries
+// the token. Kept in memory and sent as a header thereafter, so it stops
+// appearing in the address bar and in anything that logs URLs.
+const TOKEN = new URLSearchParams(location.search).get('token') || '';
+if (TOKEN) history.replaceState(null, '', location.pathname);
+const authHeaders = (extra = {}) =>
+  TOKEN ? Object.assign({ 'X-Dayboard-Token': TOKEN }, extra) : extra;
 let state = null;
 let viewMinutes = null;   // null means "follow the real clock"
+
+// Every value that reaches the page goes through textContent. Nothing here
+// builds markup from data.
+function cell(cls, text, flag) {
+  const td = document.createElement('td');
+  if (cls) td.className = cls;
+  td.textContent = text;
+  if (flag) {
+    const span = document.createElement('span');
+    span.className = 'flag';
+    span.textContent = flag;
+    td.appendChild(span);
+  }
+  return td;
+}
+
+function emptyRow(span, text) {
+  const tr = document.createElement('tr');
+  const td = document.createElement('td');
+  td.className = 'empty'; td.colSpan = span; td.textContent = text;
+  tr.appendChild(td);
+  return tr;
+}
 
 function isoForMinutes(min) {
   const base = state ? state.now.slice(0, 10) : new Date().toISOString().slice(0, 10);
@@ -282,7 +313,12 @@ async function load(opts = {}) {
   const url = viewMinutes === null
     ? '/api/day'
     : '/api/day?at=' + encodeURIComponent(isoForMinutes(viewMinutes));
-  const res = await fetch(url, { cache: 'no-store' });
+  const res = await fetch(url, { cache: 'no-store', headers: authHeaders() });
+  if (res.status === 401) {
+    document.body.textContent =
+      'Open the console with the link dayboard printed when it started.';
+    return;
+  }
   state = await res.json();
   render();
 }
@@ -292,7 +328,7 @@ async function post(path, body, errorEl) {
   const at = viewMinutes === null ? '' : '?at=' + encodeURIComponent(isoForMinutes(viewMinutes));
   const res = await fetch(path + at, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: authHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify(body),
   });
   const data = await res.json();
@@ -346,18 +382,16 @@ function render() {
   $('eventCount').textContent = state.events.length ? state.events.length : '';
   const pillOpenings = state.events.filter(
     e => e.sensor === state.sensors.pill_box && e.state === 'opened').length;
-  if (!state.events.length) {
-    tb.innerHTML = '<tr><td class="empty" colspan="4">Nothing recorded yet today.</td></tr>';
-  }
+  if (!state.events.length) tb.appendChild(emptyRow(4, 'Nothing recorded yet today.'));
   state.events.forEach((e, i) => {
     const tr = document.createElement('tr');
     if (e.future) tr.className = 'is-future';
     const isPill = e.sensor === state.sensors.pill_box && e.state === 'opened';
-    tr.innerHTML =
-      `<td class="t">${e.clock}</td>` +
-      `<td class="s">${e.sensor}${isPill && pillOpenings > 1
-        ? '<span class="flag">repeat</span>' : ''}</td>` +
-      `<td class="v">${e.state}</td>`;
+    // Built as nodes, never as HTML. Sensor names arrive from POST /event, so
+    // anything on the network can choose them; interpolating one into innerHTML
+    // let a compromised device put script into the caregiver's browser.
+    tr.append(cell('t', e.clock), cell('s', e.sensor,
+      isPill && pillOpenings > 1 ? 'repeat' : null), cell('v', e.state));
     const x = document.createElement('td'); x.className = 'x';
     const btn = document.createElement('button');
     btn.className = 'iconbtn'; btn.type = 'button';
@@ -371,12 +405,10 @@ function render() {
   // coming up
   const sb = $('schedule'); sb.replaceChildren();
   $('schedCount').textContent = state.schedule.length ? state.schedule.length : '';
-  if (!state.schedule.length) {
-    sb.innerHTML = '<tr><td class="empty" colspan="3">No appointments today.</td></tr>';
-  }
+  if (!state.schedule.length) sb.appendChild(emptyRow(3, 'No appointments today.'));
   state.schedule.forEach((s, i) => {
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td class="t">${s.clock}</td><td>${s.what}</td>`;
+    tr.append(cell('t', s.clock), cell('', s.what));
     const x = document.createElement('td'); x.className = 'x';
     const btn = document.createElement('button');
     btn.className = 'iconbtn'; btn.type = 'button';

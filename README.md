@@ -124,15 +124,63 @@ Point sensors at it. Anything that can make an HTTP request works:
 
 ```sh
 curl -X POST http://<host>:8080/event \
+     -H "X-Dayboard-Token: $(cat ~/.dayboard/token)" \
      -d '{"sensor":"pill_box","kind":"contact","state":"opened"}'
 ```
 
-Three surfaces: `/` is the screen, `/audit` is the caregiver view showing every
-line and the sensor events behind it, `/event` is where sensors report.
+Four surfaces: `/` is the screen, `/console` is where it is set up, `/audit` is
+the caregiver view as plain text, and `/event` is where sensors report. All but
+the screen need the token.
 
 Nothing leaves the building. A continuous record of when an elderly woman opens
 her pill box, her fridge and her front door is precisely the record that should
 not be sitting on somebody else's server.
+
+## Security
+
+This listens on a home network and holds a health-adjacent record of a
+vulnerable person. Four things follow from that, and most of a normal web
+checklist does not.
+
+**Writing needs a token.** Without one, anything on the wifi can POST
+`pill_box opened` and her screen will tell her she took a dose she never took.
+Every other rule in this project is about not asserting more than the sensors
+support; an open write endpoint hands that guarantee to whatever else is on the
+network. A token is made on first run, printed at startup, and kept owner-only
+in `~/.dayboard/token`. Sensors send it as `X-Dayboard-Token`.
+
+Her screen is deliberately exempt. `/` and `/api/board` show four lines anyone
+standing in the room can already read, and the tablet on the wall cannot keep a
+secret. `/api/day`, `/audit` and every write need the token, because those
+expose or change the whole record.
+
+**Values are never turned into markup.** Sensor names arrive from the network,
+so anything that can reach the port chooses them. An earlier version
+interpolated one into `innerHTML` in the console, which let a device on the wifi
+run script in the caregiver's browser. Everything now goes through
+`textContent`.
+
+**Names and appointments are length-capped.** An appointment is printed on her
+wall verbatim, so an unbounded string does not merely look untidy, it destroys
+the one display she depends on.
+
+**The headers enforce the privacy claim.** `default-src 'none'` with
+`connect-src 'self'` means the browser blocks any outbound request, so "nothing
+leaves the building" is checked rather than promised. `Permissions-Policy`
+denies camera, microphone and geolocation, holding a line the design already
+drew.
+
+Not applicable, and worth saying why rather than pretending: there is no
+database, so nothing to parameterize and no row-level security; no accounts, so
+no passwords, sessions or login to rate-limit; no uploads; no API keys or
+secrets of any kind; and the only dependency is pytest, which never runs in the
+house. HTTPS is deliberately absent: a self-signed certificate on a Pi teaches
+the household to click through browser warnings, which is worse than the plain
+HTTP it replaces on a network the token already gates.
+
+Set against a real attacker with a foothold on the LAN this is modest. It is
+proportionate to the actual risk, which is a cheap IoT device or a guest phone,
+not a targeted adversary.
 
 ## What it costs
 
@@ -187,7 +235,7 @@ actually useful to her is an open question that only she can answer.
 ## Tests
 
 ```sh
-uv run pytest          # 63 tests
+uv run pytest          # 73 tests
 ```
 
 They are mostly not ordinary unit tests. Each one corresponds to a specific way
