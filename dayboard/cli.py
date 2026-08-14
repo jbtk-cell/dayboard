@@ -1,9 +1,12 @@
 """Command line: run the screen, or inspect what it would say.
 
-    uv run python -m dayboard.cli demo                 screen with a simulated day
-    uv run python -m dayboard.cli demo --scenario double-dose
-    uv run python -m dayboard.cli show --scenario quiet    print it, no browser
-    uv run python -m dayboard.cli serve                real sensors only
+    dayboard demo                     the screen, with a simulated day
+    dayboard demo --scenario double-dose
+    dayboard show --scenario quiet    print it, no browser
+    dayboard serve                    the real thing: screen, console, sensors
+    dayboard bridge                   Zigbee sensors, forwarded into serve
+
+Before it is installed, each of these is `uv run python -m dayboard.cli ...`.
 """
 
 from __future__ import annotations
@@ -69,8 +72,34 @@ def cmd_serve(args) -> int:
     return 0
 
 
+def cmd_bridge(args) -> int:
+    """Zigbee sensors, forwarded to a dayboard that is already running."""
+    from dayboard.bridge import load_config, run, write_starter_config
+
+    store = Store(Path(args.data) if args.data else None)
+    path = Path(args.config) if args.config else store.dir / "bridge.json"
+    if not path.exists():
+        write_starter_config(path)
+        print(f"wrote a starter config to {path}")
+        print("The device names in it are placeholders. Set them to the "
+              "friendly names zigbee2mqtt shows, then run this again.")
+        return 0
+
+    config = load_config(path)
+    if args.broker:
+        config["broker"] = args.broker
+    if args.dayboard:
+        config["dayboard"] = args.dayboard
+    if not config["devices"]:
+        print(f"{path} maps no devices, so there is nothing to forward.")
+        return 1
+    return run(config, args.token or store.token)
+
+
 def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(prog="dayboard", description=__doc__)
+    parser = argparse.ArgumentParser(
+        prog="dayboard", description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
 
     show = sub.add_parser("show", help="print the board for a scenario")
@@ -90,6 +119,14 @@ def main(argv=None) -> int:
     run.add_argument("--port", type=int, default=8080)
     run.add_argument("--data", default="", help="where to keep the day (default ~/.dayboard)")
     run.set_defaults(func=cmd_serve)
+
+    bridge = sub.add_parser("bridge", help="forward Zigbee sensors into dayboard")
+    bridge.add_argument("--config", default="", help="default ~/.dayboard/bridge.json")
+    bridge.add_argument("--broker", default="", help="override the MQTT broker host")
+    bridge.add_argument("--dayboard", default="", help="override the dayboard url")
+    bridge.add_argument("--token", default="", help="default: read from the data dir")
+    bridge.add_argument("--data", default="", help="where the day is kept (default ~/.dayboard)")
+    bridge.set_defaults(func=cmd_bridge)
 
     args = parser.parse_args(argv)
     return args.func(args)

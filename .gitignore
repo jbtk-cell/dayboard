@@ -1,3 +1,11 @@
 .venv/
 __pycache__/
 *.pyc
+.pytest_cache/
+dist/
+build/
+*.egg-info/
+
+# The day itself. Never.
+.dayboard/
+*.dayboard-data/

@@ -34,6 +34,13 @@ MEAL_WINDOWS = (
 # screen will mention it. One fridge opening is someone fetching milk.
 MEAL_MIN_DISTINCT_SIGNALS = 2
 
+# States that mean something happened. A sensor reports both edges, and only one
+# of them is evidence: a fridge door closing and a room falling still are what a
+# kitchen does when it is being left. Counting those too would let someone
+# walking out of the kitchen corroborate "It looks like you had lunch", which
+# inflates the weakest claim on the screen using its own aftermath.
+ACTIVE_STATES = frozenset({"opened", "on", "motion", "used"})
+
 
 @dataclass
 class Home:
@@ -98,7 +105,8 @@ def meal_claims(log: EventLog, home: Home, now: datetime) -> list[Claim]:
     for name, start_hour, end_hour in MEAL_WINDOWS:
         in_window = [
             e for e in events
-            if e.sensor in watched and start_hour <= e.at.hour < end_hour
+            if e.sensor in watched and e.state in ACTIVE_STATES
+            and start_hour <= e.at.hour < end_hour
         ]
         distinct = {e.sensor for e in in_window}
         if len(distinct) < MEAL_MIN_DISTINCT_SIGNALS:

@@ -1,0 +1,40 @@
+[Unit]
+Description=dayboard bridge: Zigbee sensors, forwarded to the screen
+Documentation=https://github.com/__REPO__
+After=dayboard.service
+Wants=dayboard.service
+
+[Service]
+Type=simple
+User=__USER__
+Group=__USER__
+ExecStart=__PREFIX__/venv/bin/dayboard bridge --data /var/lib/dayboard
+Restart=always
+RestartSec=5
+
+# Same state directory as the screen: the bridge reads the token from it, and
+# writes nothing.
+StateDirectory=dayboard
+StateDirectoryMode=0700
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target

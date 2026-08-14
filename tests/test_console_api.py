@@ -21,6 +21,10 @@ from dayboard.store import Store
 
 AT = "2026-08-06T13:00"
 
+# Set by the fixture, for the few tests that need to reach the server directly
+# rather than through the `call` helper.
+BASE = ""
+
 
 @pytest.fixture()
 def api(tmp_path):
@@ -49,11 +53,13 @@ def api(tmp_path):
             raw = exc.read()
             return exc.code, (json.loads(raw) if raw.startswith(b"{") else raw)
 
-    TestHeaders._base = base
+    global BASE
+    BASE = base
     yield call, store
     httpd.shutdown()
     server.configure(store.load_home(), now=None, store=None)
     server._log.__init__()
+    server._health.clear()
 
 
 class TestEvents:
@@ -252,6 +258,129 @@ class TestInputLimits:
         assert status == 400
 
 
+class TestTheBridgeReachesTheScreen:
+    """The whole chain, with only the broker left out: zigbee2mqtt payloads go
+    through the real translator and the real HTTP client into the real server,
+    and what comes out is the sentence she reads off the wall."""
+
+    def _run(self, day):
+        from dayboard.bridge import Client, Device, Translator
+
+        translator = Translator({"pill box": Device("pill_box")})
+        client = Client(BASE, server._store.token)
+        for moment, payload in day:
+            for event in translator.translate("pill box", payload, moment):
+                assert client.send("/event", dict(event, at=moment.isoformat()))
+        return translator
+
+    def test_a_morning_of_real_payloads_becomes_one_sentence(self, api):
+        call, _store = api
+        day = [
+            (datetime(2026, 8, 6, 4, 0), {"contact": True, "battery": 92}),
+            (datetime(2026, 8, 6, 8, 15), {"contact": False, "battery": 92}),
+            (datetime(2026, 8, 6, 8, 16), {"contact": True, "battery": 92}),
+        ]
+        self._run(day)
+        _s, board = call("GET", f"/api/board?at={AT}", token=None)
+        assert board["lines"] == ["Your pill box was opened at 8:15am."]
+
+    def test_a_bouncing_lid_does_not_reach_her_as_five_doses(self, api):
+        call, _store = api
+        day = [(datetime(2026, 8, 6, 4, 0), {"contact": True})]
+        day += [
+            (datetime(2026, 8, 6, 8, 15, second), {"contact": bool(second % 2)})
+            for second in range(0, 6)
+        ]
+        self._run(day)
+        _s, board = call("GET", f"/api/board?at={AT}", token=None)
+        assert board["lines"] == ["Your pill box was opened at 8:15am."]
+
+    def test_an_unauthorised_bridge_changes_nothing(self, api):
+        """A device on the wifi running this same code, without the token."""
+        from dayboard.bridge import Client, Device, Translator
+
+        translator = Translator({"pill box": Device("pill_box")})
+        client = Client(BASE, "not-the-token")
+        translator.translate("pill box", {"contact": True}, datetime(2026, 8, 6, 4, 0))
+        for event in translator.translate("pill box", {"contact": False},
+                                          datetime(2026, 8, 6, 8, 15)):
+            assert client.send("/event", event) is False
+
+        call, _ = api
+        _s, board = call("GET", f"/api/board?at={AT}", token=None)
+        assert board["lines"] == []
+
+
+class TestSensorHealth:
+    """The quietest failure this system has: a coin cell dies, the screen stops
+    mentioning the pill box, and silence is the designed safe state -- so
+    nothing looks wrong while the whole thing gradually stops working."""
+
+    def _row(self, day, sensor):
+        return next(r for r in day["health"] if r["sensor"] == sensor)
+
+    def test_an_event_proves_the_sensor_is_alive(self, api):
+        call, _ = api
+        _s, day = call("POST", f"/api/event?at={AT}",
+                       {"at": "08:15", "sensor": "pill_box", "state": "opened"})
+        assert self._row(day, "pill_box")["since"] == "just now"
+        assert self._row(day, "pill_box")["quiet"] is False
+
+    def test_a_battery_report_is_not_something_that_happened_in_her_day(self, api):
+        call, _ = api
+        status, _b = call("POST", f"/api/health?at={AT}",
+                          {"sensor": "pill_box", "battery": 84})
+        assert status == 200
+        _s, day = call("GET", f"/api/day?at={AT}")
+        assert day["events"] == []                      # not in the record
+        assert day["board"]["lines"] == []              # not on her screen
+        assert self._row(day, "pill_box")["battery"] == 84
+
+    def test_a_low_battery_is_flagged(self, api):
+        call, _ = api
+        _s, day = call("POST", f"/api/health?at={AT}",
+                       {"sensor": "pill_box", "battery": 7})
+        assert self._row(day, "pill_box")["low_battery"] is True
+
+    def test_a_healthy_battery_is_not(self, api):
+        call, _ = api
+        _s, day = call("POST", f"/api/health?at={AT}",
+                       {"sensor": "pill_box", "battery": 90})
+        assert self._row(day, "pill_box")["low_battery"] is False
+
+    def test_a_sensor_that_stopped_talking_is_flagged(self, api, tmp_path):
+        """Written straight to the store, because the point is the gap."""
+        call, store = api
+        store.save_health({"pill_box": {"last_seen": "2026-08-01T09:00:00",
+                                        "battery": 55}})
+        server.load_from(store)
+        server.configure(store.load_home(), now=datetime(2026, 8, 6, 13, 0),
+                         store=store)
+        _s, day = call("GET", f"/api/day?at={AT}")
+        row = self._row(day, "pill_box")
+        assert row["quiet"] is True
+        assert row["since"] == "5 days ago"
+
+    def test_liveness_is_measured_against_now_not_the_scrubber(self, api):
+        """Scrubbing the console back to 7am must not make a live sensor look
+        as though it went quiet, nor a dead one look fine."""
+        call, _ = api
+        call("POST", f"/api/health?at={AT}", {"sensor": "pill_box", "battery": 60})
+        _s, early = call("GET", "/api/day?at=2026-08-06T07:00")
+        assert self._row(early, "pill_box")["since"] == "just now"
+
+    def test_health_needs_the_token(self, api):
+        call, _ = api
+        status, _b = call("POST", f"/api/health?at={AT}",
+                          {"sensor": "pill_box", "battery": 5}, token=None)
+        assert status == 401
+
+    def test_health_survives_a_restart(self, api, tmp_path):
+        call, _ = api
+        call("POST", f"/api/health?at={AT}", {"sensor": "pill_box", "battery": 33})
+        assert Store(tmp_path).load_health()["pill_box"]["battery"] == 33
+
+
 class TestHeaders:
     def test_the_page_may_not_reach_the_internet(self, api, tmp_path):
         """The privacy promise should be enforced by the browser, not the README."""
@@ -259,8 +388,7 @@ class TestHeaders:
         # reach the server directly so response headers are visible
         _s, _b = call("GET", "/api/board", token=None)
         import urllib.request
-        base = TestHeaders._base
-        with urllib.request.urlopen(base + "/") as resp:
+        with urllib.request.urlopen(BASE + "/") as resp:
             csp = resp.headers.get("Content-Security-Policy", "")
             perms = resp.headers.get("Permissions-Policy", "")
             assert "default-src 'none'" in csp

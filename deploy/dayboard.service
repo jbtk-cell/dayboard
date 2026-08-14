@@ -1,0 +1,46 @@
+[Unit]
+Description=dayboard: the screen that says what has already happened today
+Documentation=https://github.com/__REPO__
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+Group=__USER__
+ExecStart=__PREFIX__/venv/bin/dayboard serve --host __HOST__ --port __PORT__ --data /var/lib/dayboard
+Restart=always
+RestartSec=3
+
+# The day lives here, and systemd makes the directory owner-only for us. It is
+# deliberately not in anybody's home: a Pi on a shelf gets handed around, and a
+# record of when an elderly woman opens her pill box should not be sitting in a
+# folder someone browses.
+StateDirectory=dayboard
+StateDirectoryMode=0700
+
+# This process reads four HTML files and writes one directory. Everything below
+# holds it to that. It matters more than usual here because the thing listens on
+# a home network full of cheap devices, and because nobody is going to be
+# watching it after the first week.
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target

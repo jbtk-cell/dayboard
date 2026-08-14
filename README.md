@@ -106,6 +106,15 @@ what was observed, and what was merely noted.
   use.
 - **Sensors** maps your sensor ids onto what they watch, so `meds_tin` works as
   well as `pill_box`.
+- **Still reporting** is which sensors have said anything lately, and what their
+  batteries are down to. This is the maintenance panel, and it exists because a
+  flat coin cell is this system's quietest failure: the screen simply stops
+  mentioning the pill box, silence is its designed safe state, so nothing looks
+  wrong while the whole thing gradually stops working. A sensor that has said
+  nothing for 36 hours is flagged, because Zigbee devices report battery and
+  link quality on their own every few hours. None of it reaches her screen. She
+  cannot act on a battery percentage, and the value of those four lines is that
+  every one of them is worth reading.
 - **What she sees** is the actual screen, live, beside the controls.
 - **What supports each line** shows every line with its basis and the exact
   sensors behind it. If a line is on her screen, this says why.
@@ -118,23 +127,101 @@ will she see at three in the afternoon if the pill box never opens?
 The day is written to `~/.dayboard` as it changes, one file per day, so a reboot
 at noon does not erase the morning.
 
-## Running it for real
+## Putting it in a house
 
-Point sensors at it. Anything that can make an HTTP request works:
+```sh
+git clone https://github.com/jbtk-cell/dayboard
+cd dayboard
+sudo ./install.sh --bridge
+```
+
+That copies the code to `/opt/dayboard`, builds a virtualenv, makes a system
+user that owns nothing else, installs two systemd services, starts them, and
+prints the two links you need. It comes back by itself after a power cut, which
+is the only reliability property that matters in a house where nobody is going
+to be reading logs.
+
+The day is kept in `/var/lib/dayboard`, owner-only, deliberately not in anyone's
+home directory. `sudo ./install.sh --uninstall` takes it all off and leaves the
+record alone.
+
+### Telling it which sensor is which
+
+The bridge listens to [zigbee2mqtt](https://www.zigbee2mqtt.io) and forwards
+what it hears. Its config is `/var/lib/dayboard/bridge.json`, written on first
+run with the five devices from the parts list below:
+
+```json
+{
+  "broker": "127.0.0.1",
+  "devices": {
+    "pill box":       { "sensor": "pill_box",       "kind": "contact" },
+    "kitchen motion": { "sensor": "kitchen_motion", "kind": "motion" },
+    "kettle plug":    { "sensor": "kettle", "kind": "power", "watts": 100 }
+  }
+}
+```
+
+The keys are zigbee2mqtt friendly names, which arrive looking like
+`0x00158d0001a2b3c4` until you rename them. The values are the ids dayboard
+knows, which the console's Sensors panel sets. Then
+`sudo systemctl restart dayboard-bridge`, and `journalctl -u dayboard-bridge -f`
+shows every sensor as it reports, which is the fastest way to find out that the
+thing you labelled the fridge is the front door.
+
+Nothing has to go through Zigbee. Anything that can make an HTTP request can
+report directly, which covers ESPHome, Home Assistant, Shelly and Tasmota:
 
 ```sh
 curl -X POST http://<host>:8080/event \
-     -H "X-Dayboard-Token: $(cat ~/.dayboard/token)" \
+     -H "X-Dayboard-Token: $(sudo cat /var/lib/dayboard/token)" \
      -d '{"sensor":"pill_box","kind":"contact","state":"opened"}'
 ```
 
-Four surfaces: `/` is the screen, `/console` is where it is set up, `/audit` is
-the caregiver view as plain text, and `/event` is where sensors report. All but
-the screen need the token.
+### The screen itself
+
+A tablet is the cheap way: open the first link, set the display to never sleep,
+add it to the home screen. If you would rather drive a monitor from the Pi,
+`./deploy/kiosk.sh` sets up Chromium full screen with the blanking turned off.
+
+Five surfaces: `/` is the screen, `/console` is where it is set up, `/audit` is
+the caregiver view as plain text, `/event` is where sensors report, and
+`/health` is where they say they are still alive. All but the screen need the
+token.
 
 Nothing leaves the building. A continuous record of when an elderly woman opens
 her pill box, her fridge and her front door is precisely the record that should
 not be sitting on somebody else's server.
+
+## What the bridge has to get right
+
+A reed switch is a piece of metal, not a witness, and two things in that gap are
+safety code rather than plumbing.
+
+**Polarity is inverted.** Zigbee2mqtt's `contact` field is true when the magnet
+is *near* the switch, which is when the lid is *shut*. Read the obvious way
+round, dayboard would announce a dose every time she closed the box.
+
+**One movement makes many messages.** A nudged lid produces a burst of
+open/close reports, and forwarded naively a single opening becomes "your pill
+box was opened five times today" — five doses, to the person least able to
+check. The filter for that is stated rather than timed, because the physical
+claim is stronger than any threshold: you cannot open a lid twice without
+shutting it in between, so an opening only counts when the lid was believed
+shut. A ten-second floor catches bounce arriving as complete open/close pairs.
+
+That filter is in direct tension with this project's own rule that a repeat must
+never be collapsed into one event, and the tension is resolved in favour of the
+rule. Ten seconds is far below any interval in which a person opens a box, takes
+a tablet, shuts it and opens it again. The double-dose day is held against the
+whole chain in the tests, half an hour apart, and both openings survive.
+
+**A lid already open when the bridge starts is not an opening.** Zigbee2mqtt
+replays the last state it knew as soon as anything subscribes. Treating that as
+a transition would turn a lid left open overnight into a dose taken at
+breakfast, so the first message from a device is adopted silently. The cost is
+one real opening if it lands in the same instant as a restart; that failure is
+silence, which is this project's designed safe state.
 
 ## Security
 
@@ -170,13 +257,22 @@ leaves the building" is checked rather than promised. `Permissions-Policy`
 denies camera, microphone and geolocation, holding a line the design already
 drew.
 
+**The service runs with almost nothing.** It reads four HTML files and writes
+one directory, and the systemd unit holds it to exactly that: no capabilities,
+no access to any home directory, a read-only filesystem, and only the address
+families it needs. This matters more than usual because the thing listens on a
+home network full of cheap devices and nobody will be watching it after the
+first week.
+
 Not applicable, and worth saying why rather than pretending: there is no
 database, so nothing to parameterize and no row-level security; no accounts, so
-no passwords, sessions or login to rate-limit; no uploads; no API keys or
-secrets of any kind; and the only dependency is pytest, which never runs in the
-house. HTTPS is deliberately absent: a self-signed certificate on a Pi teaches
-the household to click through browser warnings, which is worse than the plain
-HTTP it replaces on a network the token already gates.
+no passwords, sessions or login to rate-limit; no uploads; and no API keys or
+secrets of any kind. The screen, the console and the server are stdlib only, so
+the part that runs in the house has nothing to install and nothing to keep
+patched; the bridge adds `paho-mqtt` and is the one optional extra. HTTPS is
+deliberately absent: a self-signed certificate on a Pi teaches the household to
+click through browser warnings, which is worse than the plain HTTP it replaces
+on a network the token already gates.
 
 Set against a real attacker with a foothold on the LAN this is modest. It is
 proportionate to the actual risk, which is a cheap IoT device or a guest phone,
@@ -213,6 +309,13 @@ purpose.
 **It has not been used by a real person yet.** Everything below the code is
 untested against the thing that matters.
 
+**No real Zigbee sensor has ever reported to it.** The bridge is written against
+the zigbee2mqtt message format and tested end to end against a real broker with
+real payloads, but the payloads were typed by me rather than sent by a magnet on
+a pill box lid. If something is wrong when the hardware arrives, look at
+polarity first: `contact` true means shut, and getting that backwards produces a
+screen that is confidently, dangerously inverted.
+
 **It must never be load-bearing for medication.** A human stays in the loop for
 anything that could hurt her. This is a memory aid, not a medical device, and it
 should be treated as the former even after it starts working well.
@@ -235,10 +338,17 @@ actually useful to her is an open question that only she can answer.
 ## Tests
 
 ```sh
-uv run pytest          # 73 tests
+uv sync --extra bridge
+uv run pytest          # 105 tests
 ```
 
 They are mostly not ordinary unit tests. Each one corresponds to a specific way
 the screen could tell a person who cannot check it something that is not true,
 including a fuzz pass that pushes 400 random event streams through the whole
 pipeline and asserts that no unsafe sentence ever reaches the screen.
+
+Three of them run the chain end to end with only the broker left out:
+zigbee2mqtt payloads go through the real translator and the real HTTP client
+into a real running server, and what is asserted is the sentence she would read
+off the wall. One of those is the bouncing lid, and one is a device on the wifi
+running this same bridge code without the token.

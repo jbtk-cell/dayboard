@@ -94,6 +94,24 @@ class Store:
         ]
         self._write(self._events_path(day), rows)
 
+    # ---- which sensors are still alive -----------------------------------
+
+    @property
+    def _health_path(self) -> Path:
+        return self.dir / "health.json"
+
+    def load_health(self) -> dict:
+        if not self._health_path.exists():
+            return {}
+        try:
+            data = json.loads(self._health_path.read_text())
+        except (json.JSONDecodeError, OSError):
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    def save_health(self, health: dict) -> None:
+        self._write(self._health_path, health)
+
     # ---- schedule and sensor names --------------------------------------
 
     @property

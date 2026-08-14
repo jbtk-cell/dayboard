@@ -107,6 +107,24 @@ class TestMeals:
         board = build(log, Home(), at(9))
         assert not any("breakfast" in line for line in board.lines)
 
+    def test_leaving_the_kitchen_is_not_evidence_of_eating(self):
+        """Real sensors report both edges. A fridge shutting and a room going
+        still are what a kitchen does when someone walks out of it, and letting
+        them corroborate a meal would inflate the weakest line on the screen
+        using nothing but its own aftermath."""
+        log = EventLog()
+        log.add(Event("fridge", "contact", "closed", at(8)))
+        log.add(Event("kitchen_motion", "motion", "still", at(8, 5)))
+        board = build(log, Home(), at(9))
+        assert not any("breakfast" in line for line in board.lines)
+
+    def test_an_opening_and_a_closing_of_one_door_is_still_one_signal(self):
+        log = EventLog()
+        log.add(Event("fridge", "contact", "opened", at(8)))
+        log.add(Event("fridge", "contact", "closed", at(8, 1)))
+        board = build(log, Home(), at(9))
+        assert not any("breakfast" in line for line in board.lines)
+
 
 class TestDayBoundary:
     def test_yesterdays_pill_box_does_not_appear_today(self):

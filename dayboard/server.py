@@ -43,10 +43,23 @@ MAX_SENSOR_NAME = 64
 MAX_STATE = 32
 MAX_APPOINTMENT = 120
 
+# This system's quietest failure is a flat coin cell. The screen simply stops
+# mentioning the pill box, silence is its designed safe state, and so nothing
+# looks wrong -- the family just gradually stops being told anything. Zigbee
+# sensors report battery and link quality on their own every few hours, so
+# silence for this long means the device is gone rather than the cupboard being
+# unopened.
+#
+# None of this reaches her screen. She cannot act on a battery percentage, and
+# the value of those four lines is that every one of them is worth reading.
+SILENT_AFTER_HOURS = 36
+LOW_BATTERY = 20
+
 _lock = threading.Lock()
 _store: Store | None = None
 _log = EventLog()
 _home = Home()
+_health: dict[str, dict] = {}
 
 # Demo mode pins the clock to a moment inside the simulated day. Without this
 # the demo only worked if you happened to run it during daylight hours: the
@@ -64,10 +77,11 @@ def configure(home: Home, now: datetime | None = None, store: Store | None = Non
 
 def load_from(store: Store) -> None:
     """Adopt a persisted day. Used by `serve`, not by the demo."""
-    global _log, _home, _store
+    global _log, _home, _store, _health
     _store = store
     _home = store.load_home()
     _log = store.load_events(_clock())
+    _health = store.load_health()
 
 
 def _clock() -> datetime:
@@ -78,17 +92,74 @@ def _persist() -> None:
     if _store is not None:
         _store.save_events(_log, _clock())
         _store.save_home(_home)
+        _store.save_health(_health)
+
+
+def _note_health(sensor: str, battery=None) -> None:
+    """Record that a sensor is alive. The caller holds the lock."""
+    entry = _health.setdefault(sensor, {})
+    entry["last_seen"] = _clock().isoformat(timespec="seconds")
+    if battery is not None:
+        entry["battery"] = max(0, min(100, int(battery)))
+
+
+def note_health(sensor: str, battery=None) -> None:
+    with _lock:
+        _note_health(sensor, battery)
+        _persist()
 
 
 def record(sensor: str, kind: str, state: str, at: datetime | None = None) -> None:
     with _lock:
         _log.add(Event(sensor, kind, state, at or _clock()))
+        # An event proves the device is alive, so sensors that speak plain HTTP
+        # get liveness without having to report anything extra.
+        _note_health(sensor)
         _persist()
 
 
 def current_board(now: datetime | None = None):
     with _lock:
         return build(_log, _home, now or _clock())
+
+
+def _spoken_gap(hours: float) -> str:
+    """How long ago, said the way a person would say it."""
+    if hours < 0.05:
+        return "just now"
+    if hours < 1:
+        return f"{int(hours * 60)} minutes ago"
+    if hours < 24:
+        count = int(hours)
+        return f"{count} hour{'s' if count != 1 else ''} ago"
+    days = int(hours // 24)
+    return f"{days} day{'s' if days != 1 else ''} ago"
+
+
+def _health_rows() -> list[dict]:
+    """Which sensors are still talking. Measured against the real clock, not
+    the moment the console happens to be scrubbed to -- whether a battery is
+    flat is a fact about now, not about three o'clock this afternoon."""
+    now = _clock()
+    rows = []
+    for sensor, entry in sorted(_health.items()):
+        last = entry.get("last_seen")
+        hours = None
+        if last:
+            try:
+                hours = (now - datetime.fromisoformat(last)).total_seconds() / 3600
+            except ValueError:
+                hours = None
+        battery = entry.get("battery")
+        rows.append({
+            "sensor": sensor,
+            "last_seen": last,
+            "since": _spoken_gap(hours) if hours is not None else "never",
+            "battery": battery,
+            "quiet": hours is None or hours >= SILENT_AFTER_HOURS,
+            "low_battery": battery is not None and battery <= LOW_BATTERY,
+        })
+    return rows
 
 
 def _day_payload(at: datetime) -> dict:
@@ -128,6 +199,7 @@ def _day_payload(at: datetime) -> dict:
                 "kitchen_motion": _home.kitchen_motion,
                 "kitchen_sensors": list(_home.kitchen_sensors),
             },
+            "health": _health_rows(),
         }
 
 
@@ -268,6 +340,15 @@ class Handler(BaseHTTPRequestHandler):
                 record(_bounded(body["sensor"], MAX_SENSOR_NAME, "sensor name"),
                        _bounded(body.get("kind", "contact"), MAX_STATE, "kind"),
                        _bounded(body["state"], MAX_STATE, "state"), at)
+            elif route in ("/health", "/api/health"):
+                # Not an event: a device saying it is still there. Keeping it
+                # out of the record is the point -- a battery report is not
+                # something that happened in her day.
+                battery = body.get("battery")
+                note_health(
+                    _bounded(body["sensor"], MAX_SENSOR_NAME, "sensor name"),
+                    battery if isinstance(battery, (int, float)) else None,
+                )
             elif route == "/api/event/delete":
                 self._delete_event(int(body["index"]))
             elif route == "/api/schedule":

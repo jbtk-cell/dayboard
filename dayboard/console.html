@@ -120,6 +120,25 @@ body {
 }
 
 .note { color: var(--soft); font-size: 0.8rem; margin-top: 0.75rem; }
+
+/* ---- which sensors are still alive ----
+   Deliberately plain and low in the panel. It is maintenance information for
+   whoever keeps the thing running, and it earns its place only on the day a
+   battery dies. */
+.health { border-top: 1px solid var(--rule); margin-top: 1.1rem; padding-top: 0.85rem; }
+.health-head {
+  font-size: 0.7rem; letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--soft); margin-bottom: 0.5rem;
+}
+.healthlist { list-style: none; display: grid; gap: 0.3rem; }
+.healthlist li { display: flex; align-items: baseline; gap: 0.55rem; font-size: 0.82rem; }
+.healthlist .who { font-family: var(--mono); }
+.healthlist .when { color: var(--soft); flex: 1; }
+.healthlist .batt { font-family: var(--mono); color: var(--soft); }
+/* Two different faults, marked separately. Reddening the timestamp because the
+   battery is low would say the sensor is late when it is not. */
+.healthlist li.quiet .when { color: var(--alert); font-weight: 600; }
+.healthlist li.low .batt { color: var(--alert); font-weight: 600; }
 .error { color: var(--alert); font-size: 0.82rem; margin-top: 0.6rem; min-height: 1.2em; }
 
 /* ---- the preview, pinned ---- */
@@ -239,6 +258,13 @@ body {
       <p class="note">These are the ids your sensors report. Two different
         kitchen sensors must fire before a meal is mentioned at all.</p>
       <p class="error" id="sensorError"></p>
+
+      <div class="health" id="health" hidden>
+        <div class="health-head">Still reporting</div>
+        <ul class="healthlist" id="healthList"></ul>
+        <p class="note">A flat battery shows up here and nowhere else. On her
+          screen it looks exactly like a quiet day.</p>
+      </div>
     </section>
   </main>
 
@@ -338,6 +364,31 @@ async function post(path, body, errorEl) {
   return true;
 }
 
+// Sensor names arrive from the network, so every one of these is built as a
+// text node rather than interpolated into markup.
+function renderHealth(rows) {
+  const box = $('health'), list = $('healthList');
+  list.replaceChildren();
+  if (!rows || !rows.length) { box.hidden = true; return; }
+  box.hidden = false;
+  for (const r of rows) {
+    const li = document.createElement('li');
+    li.className = [r.quiet ? 'quiet' : '', r.low_battery ? 'low' : ''].join(' ').trim();
+    const who = document.createElement('span');
+    who.className = 'who'; who.textContent = r.sensor;
+    const when = document.createElement('span');
+    when.className = 'when';
+    when.textContent = (r.quiet ? 'last heard ' : 'heard ') + r.since;
+    li.append(who, when);
+    if (r.battery !== null && r.battery !== undefined) {
+      const batt = document.createElement('span');
+      batt.className = 'batt'; batt.textContent = r.battery + '%';
+      li.append(batt);
+    }
+    list.append(li);
+  }
+}
+
 function render() {
   const nowMin = Number(state.now.slice(11, 13)) * 60 + Number(state.now.slice(14, 16));
   if (viewMinutes === null) $('slider').value = nowMin;
@@ -376,6 +427,8 @@ function render() {
     row.append(chip, txt, src);
     audit.appendChild(row);
   }
+
+  renderHealth(state.health);
 
   // today's record
   const tb = $('events'); tb.replaceChildren();
