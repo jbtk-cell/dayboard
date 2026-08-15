@@ -15,6 +15,10 @@
     --quiet: #5a5a5a;
     --rule: #d8d2c6;
   }
+  /* Every size is multiplied by --fit, which the script below turns down until
+     the day fits on the glass. Nothing may ever be scrolled to: she will not
+     scroll, so a sentence below the fold is one the screen did not say. */
+  :root { --fit: 1; }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body { height: 100%; }
   body {
@@ -22,21 +26,23 @@
     color: var(--ink);
     font-family: Georgia, "Times New Roman", serif;
     display: flex;
-    align-items: center;
-    justify-content: center;
     padding: 4vmin;
+    overflow: hidden;
     -webkit-font-smoothing: antialiased;
   }
-  main { width: 100%; max-width: 30ch; }
+  /* margin:auto rather than align-items:center. Centring a flex child that is
+     taller than its container overflows in both directions, and the top of it
+     -- here, the clock -- cannot be reached at all. */
+  main { width: 100%; max-width: min(40ch, 100%); margin: auto; }
 
   .clock {
-    font-size: clamp(3rem, 13vmin, 9rem);
+    font-size: calc(clamp(3rem, 13vmin, 9rem) * var(--fit));
     font-weight: 700;
     line-height: 1;
     letter-spacing: -0.02em;
   }
   .heading {
-    font-size: clamp(1.6rem, 6vmin, 4rem);
+    font-size: calc(clamp(1.6rem, 6vmin, 4rem) * var(--fit));
     font-weight: 400;
     color: var(--quiet);
     margin-top: 0.2em;
@@ -45,14 +51,14 @@
   }
   ul { list-style: none; margin-top: 0.7em; }
   li {
-    font-size: clamp(1.5rem, 5.2vmin, 3.4rem);
+    font-size: calc(clamp(1.5rem, 5.2vmin, 3.4rem) * var(--fit));
     line-height: 1.35;
     padding: 0.45em 0;
     border-bottom: 1px solid var(--rule);
   }
   li:last-child { border-bottom: none; }
   .empty {
-    font-size: clamp(1.3rem, 4.4vmin, 2.8rem);
+    font-size: calc(clamp(1.3rem, 4.4vmin, 2.8rem) * var(--fit));
     color: var(--quiet);
     margin-top: 1em;
     font-style: italic;
@@ -71,6 +77,29 @@
 </main>
 
 <script>
+// Shrink the type until the whole day is on the glass.
+//
+// A busy day is a long screen, and a long screen on a wall is one she reads the
+// top of and never learns the rest of. Everything this project does is about
+// not saying more than is true; a line pushed off the bottom is the same defect
+// from the other side, because to her it reads as the screen having nothing to
+// say about her evening pills.
+//
+// Shrinking is always the right answer over hiding or scrolling: small and
+// present beats large and absent.
+function fit() {
+  const root = document.documentElement;
+  let scale = 1;
+  root.style.setProperty('--fit', scale);
+  // 0.45 is the floor. Below that it would be too small to read from a chair,
+  // and a day that still does not fit at 0.45 is a sign the rules are saying
+  // too much, which is a problem to solve in rules.py rather than in CSS.
+  while (scale > 0.45 && document.body.scrollHeight > window.innerHeight) {
+    scale -= 0.03;
+    root.style.setProperty('--fit', scale);
+  }
+}
+
 // The screen must never show a stale answer as if it were current. If the
 // server cannot be reached, the lines are cleared rather than left frozen:
 // yesterday's "pill box was opened at 8:15" is worse than a blank screen.
@@ -94,6 +123,7 @@ async function refresh() {
       ul.appendChild(li);
     }
     document.getElementById('empty').hidden = board.lines.length > 0;
+    fit();
   } catch (err) {
     // Server unreachable. Clear the lines rather than leave them frozen:
     // this morning's "pill box was opened at 8:15" shown at 9pm is worse than
@@ -106,11 +136,15 @@ async function refresh() {
     document.getElementById('heading').textContent =
       now.toLocaleDateString(undefined, { weekday: 'long' });
     document.getElementById('empty').hidden = false;
+    fit();
   }
 }
 
 refresh();
 setInterval(refresh, 20000);
+// A tablet turned on its side, or a monitor swapped for a bigger one, changes
+// what fits.
+addEventListener('resize', fit);
 </script>
 </body>
 </html>
