@@ -381,6 +381,45 @@ class TestSensorHealth:
         assert Store(tmp_path).load_health()["pill_box"]["battery"] == 33
 
 
+class TestTheEdgesOfTheSite:
+    """Small things, all of which someone standing at the tablet runs into."""
+
+    def test_a_mistyped_address_offers_a_way_back(self, api):
+        """She or a caregiver fat-fingers the URL on a tablet with no keyboard
+        shortcuts and no back button in kiosk mode. A bare "not found" string
+        is a dead end."""
+        call, _ = api
+        status, body = call("GET", "/wrong-page", token=None)
+        assert status == 404
+        assert b"The screen is at" in body
+        assert b'href="/"' in body
+
+    def test_a_sensor_posting_to_the_wrong_route_still_gets_plain_text(self, api):
+        """No person reads this one, so it should not be a web page."""
+        call, _ = api
+        status, body = call("POST", "/api/nonsense", {})
+        assert status == 404
+        assert body == b"not found"
+
+    def test_there_is_a_favicon(self, api):
+        """Without it every page load asked for /favicon.ico and got a 404, and
+        the tablet home-screen shortcut had nothing to show."""
+        call, _ = api
+        for path in ("/favicon.ico", "/favicon.svg"):
+            status, body = call("GET", path, token=None)
+            assert status == 200
+            assert body.startswith(b"<svg")
+
+    def test_her_screen_has_a_heading_element(self, api):
+        """The day is the page's heading. It was a div, so the screen had no
+        heading at all."""
+        call, _ = api
+        _s, page = call("GET", "/", token=None)
+        assert b'<h1 class="heading"' in page
+        assert page.count(b"<h1") == 1
+        assert b'<html lang="en">' in page
+
+
 class TestHeaders:
     def test_the_page_may_not_reach_the_internet(self, api, tmp_path):
         """The privacy promise should be enforced by the browser, not the README."""

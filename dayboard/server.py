@@ -55,6 +55,38 @@ MAX_APPOINTMENT = 120
 SILENT_AFTER_HOURS = 36
 LOW_BATTERY = 20
 
+# The screen in miniature: a dark card, the clock, two lines under it. Served
+# from here rather than linked as a file, because the pages ship no assets and
+# fetch nothing -- and because without it every single page load asked for
+# /favicon.ico and got a 404. It matters on the tablet, where whoever sets this
+# up puts it on the home screen and then has to find it again.
+FAVICON = (
+    b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">'
+    b'<rect width="32" height="32" rx="6" fill="#1a1a1a"/>'
+    b'<rect x="6" y="6" width="15" height="7" rx="1.5" fill="#fbf8f2"/>'
+    b'<rect x="6" y="18" width="20" height="3" rx="1.5" fill="#a9a294"/>'
+    b'<rect x="6" y="24" width="13" height="3" rx="1.5" fill="#a9a294"/>'
+    b'</svg>'
+)
+
+# Someone mistypes the address on the tablet and gets a dead end. This is a way
+# back to the only page that matters, in the same face as the screen itself.
+NOT_FOUND = (
+    b'<!doctype html><html lang="en"><head><meta charset="utf-8">'
+    b'<meta name="viewport" content="width=device-width, initial-scale=1">'
+    b'<title>Not this page</title><link rel="icon" href="/favicon.svg">'
+    b'<style>body{background:#fbf8f2;color:#1a1a1a;font-family:Georgia,serif;'
+    b'display:flex;min-height:100vh;margin:0;padding:6vmin}'
+    b'main{margin:auto;max-width:26ch}h1{font-size:clamp(1.6rem,7vmin,3rem);'
+    b'font-weight:700;margin:0 0 .4em}p{font-size:clamp(1.1rem,4vmin,1.6rem);'
+    b'line-height:1.4;margin:0}a{color:#1a1a1a}'
+    b'@media(prefers-color-scheme:dark){body{background:#16150f;color:#f2ede3}'
+    b'a{color:#f2ede3}}</style></head><body><main>'
+    b'<h1>There is nothing here.</h1>'
+    b'<p>The screen is at <a href="/">this address</a>.</p>'
+    b'</main></body></html>'
+)
+
 _lock = threading.Lock()
 _store: Store | None = None
 _log = EventLog()
@@ -295,6 +327,8 @@ class Handler(BaseHTTPRequestHandler):
         route = self.path.split("?", 1)[0]
         if route in ("/", "/index.html"):
             self._page("display.html")
+        elif route in ("/favicon.svg", "/favicon.ico"):
+            self._send(200, FAVICON, "image/svg+xml")
         elif route == "/console":
             if not self._authorised():
                 self._send(401, b"Open the console with the link printed when "
@@ -315,7 +349,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, explain(current_board(self._at())).encode(),
                        "text/plain; charset=utf-8")
         else:
-            self._send(404, b"not found", "text/plain")
+            # A person typed this. Give them the way back, not a bare string.
+            self._send(404, NOT_FOUND, "text/html; charset=utf-8")
 
     def _body(self) -> dict:
         length = int(self.headers.get("Content-Length", 0) or 0)
