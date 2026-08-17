@@ -55,13 +55,27 @@ screen stays silent.
 the screen says twice, with both times. Tidying the second opening away to keep
 the display clean would hide the single event most likely to hurt her.
 
-## Try it now, with no hardware
+## Try it now, with no hardware and nothing to install
 
 ```sh
-uv sync
-uv run python -m dayboard.cli show --scenario ordinary
-uv run python -m dayboard.cli show --scenario double-dose
-uv run python -m dayboard.cli show --scenario quiet
+git clone https://github.com/jbtk-cell/dayboard
+cd dayboard
+python3 -m dayboard.cli demo
+# open http://127.0.0.1:8080
+```
+
+That is the whole thing: the screen, in a browser, with a simulated day on it.
+There is no build step, no package to install and no dependency to resolve,
+because the screen and the server are written against the standard library
+only. Any Python from 3.9 will do, which is the one that is already on a Mac
+and on a Raspberry Pi.
+
+To see it as a caregiver instead, add `/console` to that address.
+
+To read it in the terminal without a browser at all:
+
+```sh
+python3 -m dayboard.cli show --scenario double-dose
 ```
 
 `show` prints both the screen and the audit trail underneath it, so you can see
@@ -73,11 +87,10 @@ easy to get wrong rather than the ones that flatter the screen:
 - `quiet` — nothing has happened, and the screen must not say so
 - `ambiguous-door` — a door opened, and no sensor can tell arrival from departure
 
-For the real screen in a browser:
+Each scenario works in the browser too:
 
 ```sh
-uv run python -m dayboard.cli demo --scenario double-dose
-# open http://127.0.0.1:8080
+python3 -m dayboard.cli demo --scenario double-dose
 ```
 
 The demo pins its clock to 1pm of the simulated day, so it shows the same thing

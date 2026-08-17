@@ -4,7 +4,10 @@ version = "1.0.0"
 description = "A wall screen that says what has already happened today, and nothing it cannot support"
 readme = "README.md"
 license = { file = "LICENSE" }
-requires-python = ">=3.11"
+# 3.9 because that is what a stock Mac and a Raspberry Pi OS Bullseye image
+# already have, which is the difference between "clone it and run it" and "first
+# install a newer Python". The suite is run on 3.9 and 3.13.
+requires-python = ">=3.9"
 dependencies = []
 classifiers = [
     "Environment :: No Input/Output (Daemon)",
