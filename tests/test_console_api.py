@@ -381,6 +381,70 @@ class TestSensorHealth:
         assert Store(tmp_path).load_health()["pill_box"]["battery"] == 33
 
 
+class TestGettingIntoTheConsole:
+    """Opening the console used to be a one-shot. The token was stripped from
+    the address bar on load and kept only in a JavaScript variable, so a
+    refresh, a bookmark or a reopened tab locked you out with no way back but a
+    terminal that, on a machine screwed to a wall, is closed."""
+
+    def _raw(self, path, cookie=None):
+        req = urllib.request.Request(BASE + path)
+        if cookie:
+            req.add_header("Cookie", cookie)
+        try:
+            with urllib.request.urlopen(req) as resp:
+                return resp.status, resp.read(), dict(resp.headers)
+        except urllib.error.HTTPError as exc:
+            return exc.code, exc.read(), dict(exc.headers)
+
+    def test_following_the_link_hands_back_a_cookie(self, api):
+        _call, store = api
+        status, _body, headers = self._raw(f"/console?token={store.token}")
+        assert status == 200
+        cookie = headers.get("Set-Cookie", "")
+        assert store.token in cookie
+        # The page's own script must not be able to read it, and no other
+        # origin may make the browser send it.
+        assert "HttpOnly" in cookie
+        assert "SameSite=Strict" in cookie
+
+    def test_a_reload_with_only_the_cookie_works(self, api):
+        _call, store = api
+        status, _b, _h = self._raw("/console", cookie=f"dayboard_token={store.token}")
+        assert status == 200
+
+    def test_the_api_the_page_calls_accepts_it_too(self, api):
+        _call, store = api
+        status, _b, _h = self._raw("/api/day", cookie=f"dayboard_token={store.token}")
+        assert status == 200
+
+    def test_a_wrong_cookie_is_refused(self, api):
+        status, _b, _h = self._raw("/api/day", cookie="dayboard_token=not-it")
+        assert status == 401
+
+    def test_her_screen_is_never_handed_the_cookie(self, api):
+        """The tablet on the wall must not end up holding the secret."""
+        _call, store = api
+        _s, _b, headers = self._raw(f"/?token={store.token}")
+        assert "Set-Cookie" not in headers
+
+    def test_being_locked_out_says_what_to_run(self, api):
+        status, body, _h = self._raw("/console")
+        assert status == 401
+        assert b"dayboard console" in body
+        assert b'href="/"' in body  # her screen still needs no link
+
+    def test_the_console_link_is_printable_on_demand(self, api):
+        _call, store = api
+        url = server.console_url("pi.local", 8080)
+        assert url == f"http://pi.local:8080/console?token={store.token}"
+
+    def test_the_address_offered_is_one_another_device_can_reach(self, api):
+        """Printing localhost was no help: the screen is a tablet and the
+        console is a phone, and neither of them is this machine."""
+        assert server.lan_address() != "localhost"
+
+
 class TestTheEdgesOfTheSite:
     """Small things, all of which someone standing at the tablet runs into."""
 

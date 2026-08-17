@@ -4,6 +4,7 @@
     dayboard demo --scenario double-dose
     dayboard show --scenario quiet    print it, no browser
     dayboard serve                    the real thing: screen, console, sensors
+    dayboard console --open           the console link, whenever it is lost
     dayboard bridge                   Zigbee sensors, forwarded into serve
 
 Before it is installed, each of these is `uv run python -m dayboard.cli ...`.
@@ -72,6 +73,22 @@ def cmd_serve(args) -> int:
     return 0
 
 
+def cmd_console(args) -> int:
+    """Print the console link, and optionally open it.
+
+    The link is the whole of the access control, so needing to go and find it
+    again should not mean digging through a terminal that has been closed.
+    """
+    store = Store(Path(args.data) if args.data else None)
+    server.configure(store.load_home(), store=store)
+    url = server.console_url(args.host, args.port)
+    print(url)
+    if args.open:
+        import webbrowser
+        webbrowser.open(url)
+    return 0
+
+
 def cmd_bridge(args) -> int:
     """Zigbee sensors, forwarded to a dayboard that is already running."""
     from dayboard.bridge import load_config, run, write_starter_config
@@ -119,6 +136,13 @@ def main(argv=None) -> int:
     run.add_argument("--port", type=int, default=8080)
     run.add_argument("--data", default="", help="where to keep the day (default ~/.dayboard)")
     run.set_defaults(func=cmd_serve)
+
+    con = sub.add_parser("console", help="print the console link, with its token")
+    con.add_argument("--open", action="store_true", help="open it in a browser")
+    con.add_argument("--host", default="", help="default: this machine's address on the network")
+    con.add_argument("--port", type=int, default=8080)
+    con.add_argument("--data", default="", help="where the day is kept (default ~/.dayboard)")
+    con.set_defaults(func=cmd_console)
 
     bridge = sub.add_parser("bridge", help="forward Zigbee sensors into dayboard")
     bridge.add_argument("--config", default="", help="default ~/.dayboard/bridge.json")

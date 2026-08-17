@@ -87,6 +87,35 @@ NOT_FOUND = (
     b'</main></body></html>'
 )
 
+COOKIE_NAME = "dayboard_token"
+
+# What you get for arriving at /console without the token. The old text said to
+# use "the link printed when dayboard started", which is no help at all once
+# that terminal is closed -- which it is, on a machine screwed to a wall.
+CONSOLE_LOCKED = (
+    b'<!doctype html><html lang="en"><head><meta charset="utf-8">'
+    b'<meta name="viewport" content="width=device-width, initial-scale=1">'
+    b'<title>The console is locked</title><link rel="icon" href="/favicon.svg">'
+    b'<style>body{background:#e7eee8;color:#14201a;margin:0;padding:6vmin;'
+    b'font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;'
+    b'display:flex;min-height:100vh}main{margin:auto;max-width:42ch}'
+    b'h1{font-size:1.35rem;margin:0 0 .7em}p{line-height:1.55;margin:0 0 .9em}'
+    b'code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em;'
+    b'background:#f8fbf7;border:1px solid #c2d1c5;border-radius:3px;'
+    b'padding:.5em .7em;display:block;margin:.5em 0 1.1em}'
+    b'a{color:#3a5a8c}small{color:#56655d}</style></head><body><main>'
+    b'<h1>The console needs its link.</h1>'
+    b'<p>It is not password protected, it is link protected: anything on this '
+    b'network can reach this port, and a faked pill box event would put a dose '
+    b'on her screen that she never took.</p>'
+    b'<p>To print the link again, on the machine running dayboard:</p>'
+    b'<code>dayboard console --open</code>'
+    b'<p>Installed as a service, the token is in '
+    b'<code>/var/lib/dayboard/token</code></p>'
+    b'<p><small><a href="/">Her screen is here</a>, and needs no link.</small></p>'
+    b'</main></body></html>'
+)
+
 _lock = threading.Lock()
 _store: Store | None = None
 _log = EventLog()
@@ -281,6 +310,16 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Referrer-Policy", "no-referrer")
         self.send_header("Permissions-Policy",
                          "camera=(), microphone=(), geolocation=()")
+        # HttpOnly: the console's own script cannot read this, which is stricter
+        # than the JavaScript variable it replaces -- an injected script can no
+        # longer walk off with the token. SameSite=Strict is what makes it safe
+        # to authorise writes with, since no other origin can make the browser
+        # send it. No Secure flag, because there is deliberately no HTTPS here.
+        if getattr(self, "_grant_cookie", ""):
+            self.send_header(
+                "Set-Cookie",
+                f"{COOKIE_NAME}={self._grant_cookie}; Path=/; Max-Age=31536000; "
+                "HttpOnly; SameSite=Strict")
         self.end_headers()
         self.wfile.write(body)
 
@@ -291,6 +330,21 @@ class Handler(BaseHTTPRequestHandler):
         self._send(200, (Path(__file__).parent / name).read_bytes(),
                    "text/html; charset=utf-8")
 
+    def _token_in_query(self) -> str:
+        _, _, query = self.path.partition("?")
+        for part in query.split("&"):
+            key, _, value = part.partition("=")
+            if key == "token":
+                return value
+        return ""
+
+    def _token_in_cookie(self) -> str:
+        for part in self.headers.get("Cookie", "").split(";"):
+            name, _, value = part.strip().partition("=")
+            if name == COOKIE_NAME:
+                return value
+        return ""
+
     def _authorised(self) -> bool:
         """Writes and the full day log need the shared token; her screen does not.
 
@@ -298,19 +352,20 @@ class Handler(BaseHTTPRequestHandler):
         read off the wall anyway, and the tablet showing them cannot hold a
         secret. `/api/day`, `/audit` and every write expose or change the whole
         record, which is where both the privacy and the safety risk live.
+
+        Three ways to present it. Sensors send the header. A person follows the
+        link, which carries it in the query once. After that the cookie carries
+        it, because the alternative was that refreshing the console logged you
+        out of it -- the token was stripped from the address bar on load and
+        lived only in a JavaScript variable, so a reload, a bookmark or a
+        reopened tab was a lockout with no way back but the terminal.
         """
         if _store is None:
             return True  # demo and tests run without a store, so without a token
-        expected = _store.token
-        supplied = self.headers.get("X-Dayboard-Token", "")
-        if not supplied:
-            _, _, query = self.path.partition("?")
-            for part in query.split("&"):
-                key, _, value = part.partition("=")
-                if key == "token":
-                    supplied = value
-                    break
-        return secrets.compare_digest(supplied, expected)
+        supplied = (self.headers.get("X-Dayboard-Token", "")
+                    or self._token_in_query()
+                    or self._token_in_cookie())
+        return secrets.compare_digest(supplied, _store.token)
 
     def _at(self) -> datetime:
         _, _, query = self.path.partition("?")
@@ -324,6 +379,10 @@ class Handler(BaseHTTPRequestHandler):
         return _clock()
 
     def do_GET(self) -> None:
+        # Only the request that carried the link may hand the cookie back. The
+        # attribute lives on the handler, and a handler can serve more than one
+        # request on a kept-alive connection.
+        self._grant_cookie = ""
         route = self.path.split("?", 1)[0]
         if route in ("/", "/index.html"):
             self._page("display.html")
@@ -331,9 +390,10 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, FAVICON, "image/svg+xml")
         elif route == "/console":
             if not self._authorised():
-                self._send(401, b"Open the console with the link printed when "
-                                b"dayboard started.", "text/plain")
+                self._send(401, CONSOLE_LOCKED, "text/html; charset=utf-8")
                 return
+            # Remember it, so this is the last time anyone needs the link.
+            self._grant_cookie = self._token_in_query()
             self._page("console.html")
         elif route == "/api/board":
             self._json(200, current_board(self._at()).as_dict())
@@ -359,6 +419,7 @@ class Handler(BaseHTTPRequestHandler):
         return json.loads(self.rfile.read(length) or b"{}")
 
     def do_POST(self) -> None:
+        self._grant_cookie = ""
         route = self.path.split("?", 1)[0]
         if not self._authorised():
             self._json(401, {"error": "token required"})
@@ -443,17 +504,43 @@ class Handler(BaseHTTPRequestHandler):
             _persist()
 
 
+def lan_address() -> str:
+    """The address other devices in the house can reach this on.
+
+    Printing "localhost" was unhelpful in the case that matters: the screen is a
+    tablet and the console is a phone, and neither of them is this machine. No
+    packet is sent -- connecting a UDP socket only picks the route.
+    """
+    import socket
+
+    probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        probe.connect(("192.0.2.1", 1))  # TEST-NET-1, never routed anywhere
+        return probe.getsockname()[0]
+    except OSError:
+        return "localhost"
+    finally:
+        probe.close()
+
+
+def console_url(host: str = "", port: int = 8080) -> str:
+    """The one link worth keeping."""
+    where = host or lan_address()
+    if _store is None:
+        return f"http://{where}:{port}/console"
+    return f"http://{where}:{port}/console?token={_store.token}"
+
+
 def serve(host: str = "0.0.0.0", port: int = 8080) -> None:
     server = ThreadingHTTPServer((host, port), Handler)
-    shown = "localhost" if host in ("0.0.0.0", "") else host
+    shown = lan_address() if host in ("0.0.0.0", "") else host
     # flush: under systemd or a redirect this is block-buffered, and the
     # token would never reach whoever needs it.
     print(f"her screen:  http://{shown}:{port}", flush=True)
+    print(f"console:     {console_url(shown, port)}", flush=True)
     if _store is not None:
-        print(f"console:     http://{shown}:{port}/console?token={_store.token}", flush=True)
         print(f"sensors:     send header  X-Dayboard-Token: {_store.token}", flush=True)
-    else:
-        print(f"console:     http://{shown}:{port}/console", flush=True)
+        print("The console link only has to be opened once per device.", flush=True)
     print("Everything stays on this machine. Ctrl-C to stop.", flush=True)
     try:
         server.serve_forever()

@@ -102,10 +102,25 @@ events the screen is reporting.
 ## The console
 
 ```sh
-uv run python -m dayboard.cli serve
-# her screen:  http://localhost:8080
-# the console: http://localhost:8080/console
+python3 -m dayboard.cli serve
+# her screen:  http://10.0.0.170:8080
+# the console: http://10.0.0.170:8080/console?token=...
 ```
+
+Both are printed at startup as addresses other devices can reach, because the
+screen is a tablet and the console is a phone and neither of them is the machine
+running this. If the link is ever lost:
+
+```sh
+dayboard console --open
+```
+
+**The console link only has to be opened once per device.** Following it leaves
+a cookie, so a refresh, a bookmark or a reopened tab all still work. The cookie
+is `HttpOnly`, which means the page's own script cannot read it and neither can
+anything injected into the page, and `SameSite=Strict`, which means no other
+site can make the browser send it. Her screen is never given one: the tablet on
+the wall must not be the thing holding the secret.
 
 The console is where everything is set up and nothing is guessed at. It is laid
 out as a medication chart, because that is the paper artifact it replaces and
