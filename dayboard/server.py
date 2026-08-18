@@ -523,9 +523,35 @@ def lan_address() -> str:
         probe.close()
 
 
+def stable_address() -> str:
+    """A name for this machine that survives a new DHCP lease. "" if there is none.
+
+    The IP is the wrong thing to write on a tablet. A wall screen bookmarked to
+    192.168.1.234 goes blank the day the router hands out .77 instead, or the
+    day the house gets a new router -- and it goes blank for the one person in
+    the building who cannot work out why, which is the whole population this is
+    built for.
+
+    Both macOS and Raspberry Pi OS publish <hostname>.local on the network
+    without being asked, so there is usually a name to use instead.
+    """
+    import socket
+
+    name = socket.gethostname().rstrip(".")
+    if not name:
+        return ""
+    if not name.endswith(".local"):
+        name = f"{name.split('.')[0]}.local"
+    try:
+        socket.gethostbyname(name)
+    except OSError:
+        return ""  # no mDNS here; the caller falls back to the address
+    return name
+
+
 def console_url(host: str = "", port: int = 8080) -> str:
     """The one link worth keeping."""
-    where = host or lan_address()
+    where = host or stable_address() or lan_address()
     if _store is None:
         return f"http://{where}:{port}/console"
     return f"http://{where}:{port}/console?token={_store.token}"
@@ -533,11 +559,20 @@ def console_url(host: str = "", port: int = 8080) -> str:
 
 def serve(host: str = "0.0.0.0", port: int = 8080) -> None:
     server = ThreadingHTTPServer((host, port), Handler)
-    shown = lan_address() if host in ("0.0.0.0", "") else host
+    if host in ("0.0.0.0", ""):
+        # The name first, because it is the one that still works next month.
+        shown = stable_address() or lan_address()
+        fallback = lan_address() if shown != lan_address() else ""
+    else:
+        shown, fallback = host, ""
+
     # flush: under systemd or a redirect this is block-buffered, and the
     # token would never reach whoever needs it.
     print(f"her screen:  http://{shown}:{port}", flush=True)
     print(f"console:     {console_url(shown, port)}", flush=True)
+    if fallback:
+        print(f"also at:     http://{fallback}:{port}"
+              f"   (if the name above does not resolve)", flush=True)
     if _store is not None:
         print(f"sensors:     send header  X-Dayboard-Token: {_store.token}", flush=True)
         print("The console link only has to be opened once per device.", flush=True)

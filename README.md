@@ -109,7 +109,20 @@ python3 -m dayboard.cli serve
 
 Both are printed at startup as addresses other devices can reach, because the
 screen is a tablet and the console is a phone and neither of them is the machine
-running this. If the link is ever lost:
+running this.
+
+They are printed as a **name** rather than an IP wherever one exists, and that
+is not cosmetic. An address a router handed out is a bad thing to write on a
+wall tablet: the day the lease changes or the house gets a new router, the
+screen goes blank, and it goes blank for the one person in the building who
+cannot work out why. During two afternoons of testing this machine's address
+changed twice. Both macOS and Raspberry Pi OS publish `<hostname>.local` without
+being asked, so that is what dayboard offers, with the raw address underneath in
+case mDNS is not working. For a permanent installation, give the machine a DHCP
+reservation in the router as well — it costs one minute and removes the whole
+class of problem.
+
+If the link is ever lost:
 
 ```sh
 dayboard console --open

@@ -444,6 +444,17 @@ class TestGettingIntoTheConsole:
         console is a phone, and neither of them is this machine."""
         assert server.lan_address() != "localhost"
 
+    def test_a_name_is_preferred_over_a_bare_address(self, api):
+        """An IP is the wrong thing to write on a tablet. It was right twice
+        during one afternoon of testing and wrong by the next morning, and when
+        it goes wrong the screen goes blank for the person least able to say
+        why."""
+        name = server.stable_address()
+        if not name:
+            pytest.skip("this machine publishes no mDNS name")
+        assert name.endswith(".local")
+        assert name in server.console_url()
+
 
 class TestTheEdgesOfTheSite:
     """Small things, all of which someone standing at the tablet runs into."""
