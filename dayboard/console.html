@@ -142,6 +142,31 @@ body {
 .healthlist li.low .batt { color: var(--alert); font-weight: 600; }
 .error { color: var(--alert); font-size: 0.82rem; margin-top: 0.6rem; min-height: 1.2em; }
 
+/* ---- why the screen is quiet ----
+   The one panel allowed to state a negative, because the person reading it can
+   walk into the kitchen and check. */
+.quietrow { padding: 0.5rem 0; border-bottom: 1px solid var(--rule); }
+.quietrow:last-child { border-bottom: none; }
+.quietrow .subj {
+  font-size: 0.68rem; letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--soft); font-weight: 700;
+}
+.quietrow .why { font-size: 0.86rem; }
+.quietrow .fix { font-size: 0.8rem; color: var(--soft); }
+.quietrow.broken .subj, .quietrow.broken .why { color: var(--alert); }
+
+/* ---- which day is being looked at ---- */
+.daybar { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+.daybar select {
+  font-family: var(--mono); font-size: 0.8rem; padding: 0.25rem 0.4rem;
+  border: 1px solid var(--rule); border-radius: 3px;
+  background: var(--card); color: var(--ink);
+}
+.past {
+  font-size: 0.68rem; letter-spacing: 0.1em; text-transform: uppercase;
+  font-weight: 700; color: var(--inferred);
+}
+
 /* ---- the preview, pinned ---- */
 .aside { position: sticky; top: 1.25rem; }
 .screen {
@@ -203,7 +228,11 @@ body {
 
 <header class="masthead">
   <h1>dayboard console</h1>
-  <span class="date" id="today">&nbsp;</span>
+  <span class="daybar">
+    <select id="daySelect" aria-label="Which day to look at"></select>
+    <span class="date" id="today">&nbsp;</span>
+    <span class="past" id="pastFlag" hidden>a past day &middot; read only</span>
+  </span>
   <span class="spacer"></span>
   <a href="/" target="_blank">Open her screen &rarr;</a>
 </header>
@@ -307,6 +336,16 @@ body {
       <p class="caption">What supports each line</p>
       <div id="auditRows"></div>
     </div>
+
+    <div class="audit" id="silenceBox">
+      <p class="caption">Why it is quiet</p>
+      <div id="silenceRows"></div>
+      <p class="note">Her screen cannot tell you this. A wall screen that is
+        quiet because the box was not opened looks exactly like one that is
+        quiet because the battery died, and telling her the difference would
+        mean stating things no sensor can support. You can check a pill box;
+        she cannot check a screen.</p>
+    </div>
   </aside>
 </div>
 
@@ -322,6 +361,7 @@ const authHeaders = (extra = {}) =>
   TOKEN ? Object.assign({ 'X-Dayboard-Token': TOKEN }, extra) : extra;
 let state = null;
 let viewMinutes = null;   // null means "follow the real clock"
+let viewDay = null;       // null means today; otherwise 'YYYY-MM-DD'
 
 // Every value that reaches the page goes through textContent. Nothing here
 // builds markup from data.
@@ -346,15 +386,25 @@ function emptyRow(span, text) {
   return tr;
 }
 
+// Minutes on the slider are positions in a LOGICAL day, which runs 4am to 4am.
+// Anything before 4am therefore falls on the next calendar date, and building
+// the timestamp off state.now instead meant that scrubbing between midnight and
+// four in the morning quietly asked the server about tomorrow.
 function isoForMinutes(min) {
-  const base = state ? state.now.slice(0, 10) : new Date().toISOString().slice(0, 10);
+  const day = viewDay
+    || (state ? state.logical_day : new Date().toISOString().slice(0, 10));
+  const d = new Date(day + 'T12:00');
+  if (min < 4 * 60) d.setDate(d.getDate() + 1);
+  const base = d.getFullYear() + '-'
+    + String(d.getMonth() + 1).padStart(2, '0') + '-'
+    + String(d.getDate()).padStart(2, '0');
   const h = String(Math.floor(min / 60)).padStart(2, '0');
   const m = String(min % 60).padStart(2, '0');
   return `${base}T${h}:${m}`;
 }
 
 async function load(opts = {}) {
-  const url = viewMinutes === null
+  const url = (viewMinutes === null && viewDay === null)
     ? '/api/day'
     : '/api/day?at=' + encodeURIComponent(isoForMinutes(viewMinutes));
   const res = await fetch(url, { cache: 'no-store', headers: authHeaders() });
@@ -407,6 +457,45 @@ function renderHealth(rows) {
   }
 }
 
+function renderSilence(rows) {
+  const box = $('silenceRows'); box.replaceChildren();
+  if (!rows || !rows.length) {
+    const p = document.createElement('p');
+    p.className = 'note'; p.textContent = 'The screen is saying everything it can.';
+    box.appendChild(p); return;
+  }
+  for (const r of rows) {
+    const row = document.createElement('div');
+    row.className = 'quietrow' + (r.looks_broken ? ' broken' : '');
+    const subj = document.createElement('div');
+    subj.className = 'subj'; subj.textContent = r.subject;
+    const why = document.createElement('div');
+    why.className = 'why'; why.textContent = r.because;
+    const fix = document.createElement('div');
+    fix.className = 'fix'; fix.textContent = r.would_speak;
+    row.append(subj, why, fix);
+    box.appendChild(row);
+  }
+}
+
+function renderDays(days, current, isToday) {
+  const sel = $('daySelect');
+  const known = days && days.length ? days : [current];
+  if (sel.dataset.days !== known.join(',')) {
+    sel.replaceChildren();
+    for (const d of known) {
+      const o = document.createElement('option');
+      o.value = d;
+      o.textContent = new Date(d + 'T12:00').toLocaleDateString(
+        undefined, { weekday: 'short', day: 'numeric', month: 'short' });
+      sel.appendChild(o);
+    }
+    sel.dataset.days = known.join(',');
+  }
+  sel.value = current;
+  $('pastFlag').hidden = isToday !== false;
+}
+
 function render() {
   const nowMin = Number(state.now.slice(11, 13)) * 60 + Number(state.now.slice(14, 16));
   if (viewMinutes === null) $('slider').value = nowMin;
@@ -447,6 +536,8 @@ function render() {
   }
 
   renderHealth(state.health);
+  renderSilence(state.silence);
+  renderDays(state.known_days, state.logical_day, state.is_today);
 
   // today's record
   const tb = $('events'); tb.replaceChildren();
@@ -530,6 +621,21 @@ function render() {
   for (const s of state.schedule) mark(s.minutes, 'sched', `${s.clock} ${s.what}`);
 }
 
+// Looking at an earlier day. The record is on disk one file per day, kept on
+// purpose, and this reads it back: what her screen actually said at any moment
+// of any day it has been running.
+$('daySelect').addEventListener('change', (ev) => {
+  const chosen = ev.target.value;
+  const live = state && state.is_today ? state.logical_day : null;
+  if (live && chosen === live) {
+    viewDay = null; viewMinutes = null;          // back to following the clock
+  } else {
+    viewDay = chosen;
+    if (viewMinutes === null) viewMinutes = 13 * 60;
+  }
+  load();
+});
+
 $('slider').addEventListener('input', (ev) => {
   viewMinutes = Number(ev.target.value);
   $('scrubNote').textContent = 'Showing a moment in the day. Release to keep looking, or reload to follow the clock.';
@@ -575,7 +681,7 @@ $('sensorForm').addEventListener('submit', (ev) => {
 });
 
 load();
-setInterval(() => { if (viewMinutes === null) load(); }, 20000);
+setInterval(() => { if (viewMinutes === null && viewDay === null) load(); }, 20000);
 </script>
 </body>
 </html>

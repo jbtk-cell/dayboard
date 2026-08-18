@@ -34,6 +34,7 @@ from dayboard.events import (
     Event, EventLog, day_end, logical_date, part_of_day, spoken_time,
 )
 from dayboard.rules import Home, default_dose_label
+from dayboard.silence import explain_silence
 from dayboard.store import Store
 
 # Caps on anything a caller can name. The appointment text goes onto her wall
@@ -171,8 +172,18 @@ def note_health(sensor: str, battery=None) -> None:
 
 
 def record(sensor: str, kind: str, state: str, at: datetime | None = None) -> None:
+    moment = at or _clock()
     with _lock:
-        _log.add(Event(sensor, kind, state, at or _clock()))
+        # An event dated before the day held in memory would be taken for a day
+        # rollover and clear this morning on its way past. Rolling *forward* at
+        # 4am is the intended behaviour and stays allowed. Going backwards is a
+        # sensor with a wrong clock, or somebody adding a row while looking at
+        # Tuesday, and either way it silently erases today.
+        if _log.day is not None and logical_date(moment) < _log.day:
+            raise ValueError(
+                "that event is dated before the day on screen, and recording "
+                "it would clear today")
+        _log.add(Event(sensor, kind, state, moment))
         # An event proves the device is alive, so sensors that speak plain HTTP
         # get liveness without having to report anything extra.
         _note_health(sensor)
@@ -223,17 +234,44 @@ def _health_rows() -> list[dict]:
     return rows
 
 
+def _log_for(at: datetime) -> EventLog:
+    """The events of whatever logical day `at` falls in.
+
+    Today's live log for today, and a day read back off disk for anything
+    earlier. This is what makes "what did her screen actually say at seven on
+    Tuesday" a question with an answer. The old days were already being kept on
+    purpose; nothing had ever read them.
+    """
+    if _log.day is not None and logical_date(at) == _log.day:
+        return _log
+    if _store is None:
+        return _log
+    return _store.load_events(at)
+
+
+def known_days() -> list[str]:
+    """Every logical day there is a record of, newest first."""
+    if _store is None:
+        return []
+    days = sorted(path.name[len("events-"):-len(".json")]
+                  for path in _store.dir.glob("events-*.json"))
+    return list(reversed(days))
+
+
 def _day_payload(at: datetime) -> dict:
-    """Everything the console draws, for one moment in the day."""
+    """Everything the console draws, for one moment in one day."""
     at_day = logical_date(at)
     with _lock:
-        board = build(_log, _home, at)
-        events = _log.since_day_start(day_end(at))
+        log = _log_for(at)
+        board = build(log, _home, at)
+        events = log.since_day_start(day_end(at))
         return {
             "board": board.as_dict(),
             "now": at.isoformat(timespec="minutes"),
             "part_of_day": part_of_day(at),
             "logical_day": logical_date(at).isoformat(),
+            "known_days": known_days(),
+            "is_today": _log.day is None or logical_date(at) == _log.day,
             "events": [
                 {
                     "sensor": e.sensor,
@@ -262,6 +300,9 @@ def _day_payload(at: datetime) -> dict:
                 "kitchen_sensors": list(_home.kitchen_sensors),
             },
             "health": _health_rows(),
+            # Caregiver-only, and deliberately allowed to state negatives that
+            # her screen never may. See the docstring in silence.py.
+            "silence": [s.as_dict() for s in explain_silence(log, _home, at, _health)],
             "doses": [
                 {
                     "at": at.isoformat(timespec="minutes"),

@@ -172,6 +172,18 @@ what was observed, and what was merely noted.
   link quality on their own every few hours. None of it reaches her screen. She
   cannot act on a battery percentage, and the value of those four lines is that
   every one of them is worth reading.
+- **Why it is quiet** is the one panel allowed to say what her screen never may.
+  Silence is this project's most important behaviour and its least legible: a
+  screen that is quiet because the box was not opened looks exactly like one
+  that is quiet because the coin cell died on Tuesday, or because nobody ever
+  said when her doses are. This tells those apart, and says what would make each
+  line appear. It states negatives on purpose, and that is not a contradiction —
+  the prohibition exists because *she* cannot check the screen. You can walk into
+  the kitchen and look at the pill box.
+- **The day picker** at the top replays any day there is a record of. The event
+  files were always kept one per day on purpose; this reads them back, so
+  "what did her screen actually say at seven on Tuesday" has an answer. Past days
+  are read only.
 - **What she sees** is the actual screen, live, beside the controls.
 - **What supports each line** shows every line with its basis and the exact
   sensors behind it. If a line is on her screen, this says why.

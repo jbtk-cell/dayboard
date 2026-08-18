@@ -17,6 +17,7 @@ from http.server import ThreadingHTTPServer
 import pytest
 
 from dayboard import server
+from dayboard.events import Event, EventLog
 from dayboard.store import Store
 
 AT = "2026-08-06T13:00"
@@ -363,6 +364,119 @@ class TestTheBridgeReachesTheScreen:
         call, _ = api
         _s, board = call("GET", f"/api/board?at={AT}", token=None)
         assert board["lines"] == []
+
+
+class TestWhyItIsQuiet:
+    """Silence is this project's most important behaviour and its least legible.
+    Quiet because the box was not opened, quiet because the battery died, and
+    quiet because nobody set a regimen all look identical on the wall."""
+
+    def _for(self, day, subject):
+        return next((s for s in day["silence"] if s["subject"] == subject), None)
+
+    def test_no_regimen_is_named_as_the_reason(self, api):
+        call, _ = api
+        _s, day = call("GET", f"/api/day?at={AT}")
+        pills = self._for(day, "pills")
+        assert "No regimen" in pills["because"]
+        assert "Add a dose time" in pills["would_speak"]
+
+    def test_an_unopened_box_is_distinguished_from_a_dead_sensor(self, api):
+        call, _ = api
+        _s, day = call("GET", f"/api/day?at={AT}")
+        box = self._for(day, "the pill box")
+        assert box["because"] == "The pill box has not reported an opening today."
+        assert box["looks_broken"] is False
+
+    def test_a_sensor_that_died_says_so_instead(self, api, tmp_path):
+        call, store = api
+        store.save_health({"pill_box": {"last_seen": "2026-01-01T09:00:00"}})
+        server.load_from(store)
+        server.configure(store.load_home(), now=datetime(2026, 8, 6, 13, 0), store=store)
+        _s, day = call("GET", f"/api/day?at={AT}")
+        box = self._for(day, "the pill box")
+        assert box["looks_broken"] is True
+        assert "battery" in box["would_speak"]
+
+    def test_a_meal_short_of_corroboration_says_what_is_missing(self, api):
+        call, _ = api
+        call("POST", f"/api/event?at={AT}",
+             {"at": "12:40", "sensor": "fridge", "state": "opened"})
+        _s, day = call("GET", f"/api/day?at={AT}")
+        lunch = self._for(day, "lunch")
+        assert "One kitchen signal" in lunch["because"]
+        assert "fridge" in lunch["because"]
+
+    def test_a_window_that_has_not_opened_yet_is_not_explained(self, api):
+        """At one in the afternoon there is nothing to say about dinner."""
+        call, _ = api
+        _s, day = call("GET", f"/api/day?at={AT}")
+        assert self._for(day, "dinner") is None
+
+    def test_none_of_it_reaches_her_screen(self, api):
+        """This module states negatives on purpose. They are safe for someone
+        who can walk into the kitchen and check, and unsafe for someone who
+        cannot."""
+        call, _ = api
+        _s, day = call("GET", f"/api/day?at={AT}")
+        assert day["silence"]
+        _s, board = call("GET", "/api/board", token=None)
+        for line in board["lines"]:
+            assert "has not" not in line and "No " not in line
+
+
+class TestLookingAtAnEarlierDay:
+    """The day files were always kept on purpose. Nothing ever read them back."""
+
+    def test_a_past_day_can_be_replayed(self, api, tmp_path):
+        call, store = api
+        call("POST", f"/api/event?at={AT}",
+             {"at": "08:15", "sensor": "pill_box", "state": "opened"})
+        # A day that is over, written straight to the store the way it would
+        # have been left behind.
+        earlier = EventLog()
+        earlier.add(Event("pill_box", "contact", "opened",
+                          datetime(2026, 8, 4, 7, 50)))
+        store.save_events(earlier)
+
+        _s, day = call("GET", "/api/day?at=2026-08-04T13:00")
+        assert day["logical_day"] == "2026-08-04"
+        assert day["is_today"] is False
+        assert day["board"]["lines"][0] == "Your pill box was opened at 7:50am."
+
+    def test_today_is_still_today(self, api):
+        call, _ = api
+        call("POST", f"/api/event?at={AT}",
+             {"at": "08:15", "sensor": "pill_box", "state": "opened"})
+        _s, day = call("GET", f"/api/day?at={AT}")
+        assert day["is_today"] is True
+        assert len(day["events"]) == 1
+
+    def test_the_days_on_record_are_listed(self, api, tmp_path):
+        call, store = api
+        call("POST", f"/api/event?at={AT}",
+             {"at": "08:15", "sensor": "pill_box", "state": "opened"})
+        earlier = EventLog()
+        earlier.add(Event("fridge", "contact", "opened", datetime(2026, 8, 4, 9, 0)))
+        store.save_events(earlier)
+        _s, day = call("GET", f"/api/day?at={AT}")
+        assert day["known_days"] == ["2026-08-06", "2026-08-04"]
+
+    def test_a_backdated_event_cannot_wipe_today(self, api):
+        """EventLog clears itself when the day changes, which is right at 4am
+        and catastrophic if a stale timestamp arrives from a sensor with a bad
+        clock, or from someone adding a row while looking at Tuesday."""
+        call, _ = api
+        call("POST", f"/api/event?at={AT}",
+             {"at": "08:15", "sensor": "pill_box", "state": "opened"})
+        status, body = call("POST", f"/api/event?at={AT}",
+                            {"at": "2026-08-04T09:00", "sensor": "fridge",
+                             "state": "opened"})
+        assert status == 400
+        assert "would clear today" in body["error"]
+
+        _s, day = call("GET", f"/api/day?at={AT}")
+        assert len(day["events"]) == 1     # this morning is still there
 
 
 class TestSensorHealth:
