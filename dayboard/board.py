@@ -19,10 +19,15 @@ from datetime import datetime
 from dayboard.claims import Basis, Claim
 from dayboard.events import EventLog, spoken_time
 from dayboard.rules import (
-    Home, day_heading, door_claims, meal_claims, pill_box_claims, schedule_claims,
+    Home, day_heading, door_claims, dose_claims, meal_claims, pill_box_claims,
+    schedule_claims,
 )
 
-MAX_LINES = 4
+# Five, not four. The dose line is new and the pill box line is the one it has
+# to sit beside; capping at four meant adding the dose silently pushed her
+# appointment off the bottom, which is the failure this project is named after
+# happening in the layout instead of the sensors.
+MAX_LINES = 5
 
 
 @dataclass(frozen=True)
@@ -39,6 +44,13 @@ class Board:
         return {
             "heading": self.heading,
             "lines": self.lines,
+            # The same sentences, carrying how much support each one has. The
+            # screen used to render a dose that is due and a guess about lunch
+            # in identical type, so it had no hierarchy at all and she had to
+            # read all of it to find the one line worth acting on.
+            "rows": [
+                {"text": c.text, "basis": c.basis.value} for c in self.claims
+            ],
             # The clock comes from here, not from the browser. Two clocks that
             # can disagree is one clock too many when the whole point is telling
             # someone what time it is and what has happened by now.
@@ -59,14 +71,20 @@ class Board:
 def build(log: EventLog, home: Home, now: datetime) -> Board:
     """Compose the board in fixed priority order.
 
-    Medication first because it is the only line where being wrong is
-    dangerous, then meals, then what is coming, then the door. The door is last
-    because it is the least actionable and the first thing worth dropping.
+    Medication first because it is the only place where being wrong is
+    dangerous: the dose that is due, then what the box actually did. Those two
+    sit together on purpose -- side by side they answer "should I take these
+    now", which neither of them answers alone.
+
+    Then what is coming, because an appointment is something she can act on,
+    and only then meals, which are the weakest claim on the screen. The door is
+    last because it is the least actionable and so the first worth dropping.
     """
     groups = [
+        dose_claims(home, now),
         pill_box_claims(log, home, now),
-        meal_claims(log, home, now),
         schedule_claims(home, now),
+        meal_claims(log, home, now),
         door_claims(log, home, now),
     ]
 

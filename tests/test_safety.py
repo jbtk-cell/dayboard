@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import random
 from datetime import datetime, timedelta
+from datetime import time as dtime
 
 import pytest
 
@@ -16,7 +17,7 @@ from dayboard.claims import (
     BODILY_VERBS, Basis, Claim, inferred, observed, scheduled,
 )
 from dayboard.events import Event, EventLog
-from dayboard.rules import Home, pill_box_claims
+from dayboard.rules import Home, dose_claims, pill_box_claims
 
 DAY = datetime(2026, 8, 6, 9, 0)
 
@@ -124,6 +125,65 @@ class TestMeals:
         log.add(Event("fridge", "contact", "closed", at(8, 1)))
         board = build(log, Home(), at(9))
         assert not any("breakfast" in line for line in board.lines)
+
+
+class TestDosesDue:
+    """The line that answers "should I take these now".
+
+    It is the most useful thing on the screen and the easiest to get killed,
+    because the useful phrasing and the forbidden phrasing are one word apart."""
+
+    def home(self):
+        return Home(doses=[(dtime(8, 0), ""), (dtime(19, 0), "")])
+
+    def test_nothing_is_said_about_pills_until_somebody_says_when(self):
+        """An empty regimen must not be guessed at."""
+        assert dose_claims(Home(), at(8)) == []
+
+    def test_the_dose_she_is_nearest_to_is_named(self):
+        claims = dose_claims(self.home(), at(18, 45))
+        assert claims[0].text == "Your evening pills are due at 7:00pm."
+
+    def test_it_is_still_named_shortly_after(self):
+        claims = dose_claims(self.home(), at(19, 30))
+        assert claims[0].text == "Your evening pills were due at 7:00pm."
+
+    def test_the_evening_is_not_mentioned_at_breakfast(self):
+        """Telling her at 8am about a 7pm dose hands her something to hold on
+        to for eleven hours, which is the one thing she cannot do."""
+        assert dose_claims(self.home(), at(8, 30))[0].text.startswith("Your morning")
+
+    def test_long_past_doses_are_dropped(self):
+        assert dose_claims(self.home(), at(15, 0)) == []
+
+    def test_it_never_says_whether_she_took_them(self):
+        """In either direction. Both are unsupported, and both are how somebody
+        ends up with an extra dose."""
+        for hour, minute in [(7, 0), (8, 0), (9, 0), (18, 0), (19, 0), (21, 0)]:
+            for claim in dose_claims(self.home(), at(hour, minute)):
+                lowered = claim.text.lower()
+                assert "took" not in lowered and "taken" not in lowered
+                assert claim.basis is Basis.SCHEDULED
+
+    def test_the_due_line_sits_beside_what_the_box_did(self):
+        """Neither answers her question alone; together they do, and she does
+        the arithmetic rather than the screen doing it for her."""
+        log = EventLog()
+        log.add(Event("pill_box", "contact", "opened", at(8, 15)))
+        board = build(log, self.home(), at(19, 5))
+        assert board.lines[0] == "Your evening pills were due at 7:00pm."
+        assert board.lines[1] == "Your pill box was opened at 8:15am."
+
+    def test_a_dose_already_dealt_with_reads_as_dealt_with(self):
+        log = EventLog()
+        log.add(Event("pill_box", "contact", "opened", at(19, 2)))
+        board = build(log, self.home(), at(19, 40))
+        assert "were due at 7:00pm" in board.lines[0]
+        assert "opened at 7:02pm" in board.lines[1]
+
+    def test_a_named_dose_uses_the_name_it_was_given(self):
+        home = Home(doses=[(dtime(12, 30), "lunchtime")])
+        assert "lunchtime pills" in dose_claims(home, at(12, 25))[0].text
 
 
 class TestDayBoundary:

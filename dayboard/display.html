@@ -58,6 +58,30 @@
     border-bottom: 1px solid var(--rule);
   }
   li:last-child { border-bottom: none; }
+
+  /* Hierarchy by how much support a line has, which here is the same thing as
+     how much she should act on it.
+
+     A dose that is due and a guess about lunch used to be set identically, so
+     the screen had no shape at all: every line had to be read to find the one
+     worth doing something about. Now the thing ahead of her is the heaviest
+     thing on the glass, and the record underneath it is quieter.
+
+     Contrast is never traded away to do it. Greying the weaker lines out is the
+     obvious move and the wrong one -- this is read by a woman in her nineties
+     from across a room, and contrast is the first thing that fails. The weaker
+     lines keep the same ink and give up weight instead. */
+  li.scheduled {
+    font-weight: 700;
+    font-size: calc(clamp(1.6rem, 5.8vmin, 3.8rem) * var(--fit));
+    padding-left: 0.6em;
+    border-left: 0.16em solid var(--ink);
+    margin-left: -0.76em;
+  }
+  /* The hedge is in the words already ("It looks like"). Italic says the same
+     thing to the eye before the sentence is read. */
+  li.inferred { font-style: italic; }
+
   .empty {
     font-size: calc(clamp(1.3rem, 4.4vmin, 2.8rem) * var(--fit));
     color: var(--quiet);
@@ -118,9 +142,13 @@ async function refresh() {
     document.getElementById('heading').textContent = board.heading;
     const ul = document.getElementById('lines');
     ul.replaceChildren();
-    for (const line of board.lines) {
+    // `rows` carries how much support each line has; `lines` is the same
+    // sentences without it, kept for anything older reading this endpoint.
+    const rows = board.rows || board.lines.map(text => ({ text, basis: '' }));
+    for (const row of rows) {
       const li = document.createElement('li');
-      li.textContent = line;
+      if (row.basis) li.className = row.basis;
+      li.textContent = row.text;
       ul.appendChild(li);
     }
     document.getElementById('empty').hidden = board.lines.length > 0;

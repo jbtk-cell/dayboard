@@ -11,12 +11,24 @@ never charges and never has to understand. She looks at it the way she looks at 
 clock.
 
 ```
-  Thursday afternoon
+  7:10pm      Tuesday evening
 
-  Your pill box was opened at 8:15am.
+  Your evening pills are due at 7:00pm.
+  Your pill box was opened at 8:12am.
+  Sarah is coming at 8:30pm.
   It looks like you had breakfast.
-  Sarah is coming at 4:00pm.
 ```
+
+Those first two lines are the point. Standing there at seven in the evening her
+question is not "what happened today", it is **"should I take these now"** — and
+one line alone cannot answer it. The dose time came from a person. The opening
+came from a sensor. Put next to each other they answer the question, and she
+does the last step herself, which is a step she can still do.
+
+What the screen will not do is take that step for her. "You have not taken your
+evening pills" is a claim about something not happening, which no sensor can
+support; "You already took them" is a claim about her body, which no sensor can
+see. Both are wrong in the direction that puts an extra dose in someone.
 
 ## The one rule everything else follows
 
@@ -140,6 +152,10 @@ out as a medication chart, because that is the paper artifact it replaces and
 because a drug chart already makes the distinction this project is built on:
 what was observed, and what was merely noted.
 
+- **When her pills are due** is her regimen: a time of day and what the house
+  calls it. It repeats daily. Until something is set here the screen says
+  nothing at all about pills, because guessing a regimen is not a thing this is
+  allowed to do.
 - **Today's record** is every sensor event, with times in a monospace column.
   Rows can be added by hand to try something out, or removed. A pill box opened
   more than once is flagged `repeat`.

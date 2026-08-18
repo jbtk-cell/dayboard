@@ -25,7 +25,7 @@ from __future__ import annotations
 import json
 import secrets
 import threading
-from datetime import datetime
+from datetime import datetime, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -33,7 +33,7 @@ from dayboard.board import build, explain
 from dayboard.events import (
     Event, EventLog, day_end, logical_date, part_of_day, spoken_time,
 )
-from dayboard.rules import Home
+from dayboard.rules import Home, default_dose_label
 from dayboard.store import Store
 
 # Caps on anything a caller can name. The appointment text goes onto her wall
@@ -225,6 +225,7 @@ def _health_rows() -> list[dict]:
 
 def _day_payload(at: datetime) -> dict:
     """Everything the console draws, for one moment in the day."""
+    at_day = logical_date(at)
     with _lock:
         board = build(_log, _home, at)
         events = _log.since_day_start(day_end(at))
@@ -261,6 +262,15 @@ def _day_payload(at: datetime) -> dict:
                 "kitchen_sensors": list(_home.kitchen_sensors),
             },
             "health": _health_rows(),
+            "doses": [
+                {
+                    "at": at.isoformat(timespec="minutes"),
+                    "clock": spoken_time(datetime.combine(at_day, at)),
+                    "what": what or default_dose_label(at),
+                    "named": bool(what),
+                }
+                for at, what in sorted(_home.doses)
+            ],
         }
 
 
@@ -451,6 +461,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._add_schedule(body)
             elif route == "/api/schedule/delete":
                 self._delete_schedule(int(body["index"]))
+            elif route == "/api/doses":
+                self._add_dose(body)
+            elif route == "/api/doses/delete":
+                self._delete_dose(int(body["index"]))
             elif route == "/api/sensors":
                 self._set_sensors(body)
             else:
@@ -485,6 +499,31 @@ class Handler(BaseHTTPRequestHandler):
             if not 0 <= index < len(entries):
                 raise ValueError("no such appointment")
             _home.schedule.remove(entries[index])
+            _persist()
+
+    def _add_dose(self, body: dict) -> None:
+        """When her pills are due. A time of day, not a date: it repeats."""
+        raw = str(body.get("at", "")).strip()
+        try:
+            hour, _, minute = raw.partition(":")
+            at = time(int(hour), int(minute or 0))
+        except ValueError:
+            raise ValueError("a dose needs a time of day, like 08:00")
+        label = str(body.get("what", "")).strip()
+        if label:
+            label = _bounded(label, MAX_STATE, "what to call the dose")
+        with _lock:
+            if any(existing == at for existing, _ in _home.doses):
+                raise ValueError("there is already a dose at that time")
+            _home.doses.append((at, label))
+            _home.doses.sort()
+            _persist()
+
+    def _delete_dose(self, index: int) -> None:
+        with _lock:
+            if not 0 <= index < len(_home.doses):
+                raise ValueError("no such dose")
+            _home.doses.pop(index)
             _persist()
 
     def _set_sensors(self, body: dict) -> None:

@@ -231,6 +231,23 @@ body {
     </section>
 
     <section class="panel">
+      <div class="panel-head">When her pills are due
+        <span class="count" id="doseCount"></span></div>
+      <table class="chart"><tbody id="doses"></tbody></table>
+      <form class="entry" id="doseForm">
+        <input class="t" name="at" id="dsTime" placeholder="08:00" inputmode="numeric" required>
+        <input class="grow" name="what" id="dsWhat" placeholder="morning (optional)">
+        <button type="submit">Add a dose</button>
+      </form>
+      <p class="note">These repeat every day. Her screen names the one she is
+        nearest to and puts it beside what the box actually did, so the two
+        together answer &ldquo;should I take these now&rdquo;. It never says
+        whether she has taken them &mdash; no sensor can know that, and being
+        wrong either way is how somebody gets an extra dose.</p>
+      <p class="error" id="doseError"></p>
+    </section>
+
+    <section class="panel">
       <div class="panel-head">Coming up <span class="count" id="schedCount"></span></div>
       <table class="chart"><tbody id="schedule"></tbody></table>
       <form class="entry" id="schedForm">
@@ -456,6 +473,24 @@ function render() {
     tb.appendChild(tr);
   });
 
+  // when her pills are due
+  const db = $('doses'); db.replaceChildren();
+  const doses = state.doses || [];
+  $('doseCount').textContent = doses.length ? doses.length : '';
+  if (!doses.length) db.appendChild(emptyRow(3, 'No doses set, so the screen says nothing about pills.'));
+  doses.forEach((d, i) => {
+    const tr = document.createElement('tr');
+    tr.append(cell('t', d.clock), cell('', d.what + ' pills'));
+    const x = document.createElement('td'); x.className = 'x';
+    const btn = document.createElement('button');
+    btn.className = 'iconbtn'; btn.type = 'button';
+    btn.title = 'Remove'; btn.setAttribute('aria-label', 'Remove the ' + d.what + ' dose');
+    btn.textContent = '×';
+    btn.onclick = () => post('/api/doses/delete', { index: i }, $('doseError'));
+    x.appendChild(btn); tr.appendChild(x);
+    db.appendChild(tr);
+  });
+
   // coming up
   const sb = $('schedule'); sb.replaceChildren();
   $('schedCount').textContent = state.schedule.length ? state.schedule.length : '';
@@ -518,6 +553,15 @@ $('schedForm').addEventListener('submit', async (ev) => {
     what: $('scWhat').value.trim(),
   }, $('schedError'));
   if (ok) { $('scTime').value = ''; $('scWhat').value = ''; $('scTime').focus(); }
+});
+
+$('doseForm').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const ok = await post('/api/doses', {
+    at: $('dsTime').value.trim(),
+    what: $('dsWhat').value.trim(),
+  }, $('doseError'));
+  if (ok) { $('dsTime').value = ''; $('dsWhat').value = ''; $('dsTime').focus(); }
 });
 
 $('sensorForm').addEventListener('submit', (ev) => {

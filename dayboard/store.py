@@ -14,7 +14,7 @@ decoration. They are never loaded into today's screen.
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, time
 from pathlib import Path
 
 from dayboard.events import Event, EventLog, day_end, logical_date
@@ -132,7 +132,16 @@ class Store:
                 schedule.append((datetime.fromisoformat(row["at"]), str(row["what"])))
             except (KeyError, ValueError, TypeError):
                 continue
+
+        doses = []
+        for row in data.get("doses", []):
+            try:
+                doses.append((time.fromisoformat(row["at"]), str(row.get("what", ""))))
+            except (KeyError, ValueError, TypeError):
+                continue
+
         return Home(
+            doses=doses,
             pill_box=data.get("pill_box", "pill_box"),
             front_door=data.get("front_door", "front_door"),
             kitchen_sensors=tuple(data.get("kitchen_sensors",
@@ -150,6 +159,10 @@ class Store:
             "schedule": [
                 {"at": when.isoformat(timespec="minutes"), "what": what}
                 for when, what in home.schedule
+            ],
+            "doses": [
+                {"at": at.isoformat(timespec="minutes"), "what": what}
+                for at, what in home.doses
             ],
         })
 

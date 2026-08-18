@@ -122,6 +122,60 @@ class TestSchedule:
         assert day["schedule"] == []
 
 
+class TestDoses:
+    def test_setting_a_regimen_puts_it_on_her_screen(self, api):
+        call, _ = api
+        status, day = call("POST", f"/api/doses?at={AT}", {"at": "19:00"})
+        assert status == 200
+        assert day["doses"][0]["clock"] == "7:00pm"
+        assert day["doses"][0]["what"] == "evening"
+
+        _s, evening = call("GET", "/api/day?at=2026-08-06T18:40")
+        assert evening["board"]["lines"][0] == "Your evening pills are due at 7:00pm."
+
+    def test_a_dose_can_be_called_what_the_household_calls_it(self, api):
+        call, _ = api
+        _s, day = call("POST", f"/api/doses?at={AT}",
+                       {"at": "12:30", "what": "lunchtime"})
+        assert day["doses"][0]["what"] == "lunchtime"
+
+    def test_a_dose_needs_a_time(self, api):
+        call, _ = api
+        status, body = call("POST", f"/api/doses?at={AT}", {"at": "soon"})
+        assert status == 400
+        assert "time of day" in body["error"]
+
+    def test_the_same_time_is_not_added_twice(self, api):
+        call, _ = api
+        call("POST", f"/api/doses?at={AT}", {"at": "08:00"})
+        status, body = call("POST", f"/api/doses?at={AT}", {"at": "08:00"})
+        assert status == 400
+        assert "already" in body["error"]
+
+    def test_a_dose_can_be_removed(self, api):
+        call, _ = api
+        call("POST", f"/api/doses?at={AT}", {"at": "08:00"})
+        _s, day = call("POST", f"/api/doses/delete?at={AT}", {"index": 0})
+        assert day["doses"] == []
+
+    def test_the_regimen_survives_a_restart(self, api, tmp_path):
+        call, _ = api
+        call("POST", f"/api/doses?at={AT}", {"at": "19:00", "what": "evening"})
+        reopened = Store(tmp_path).load_home()
+        assert reopened.doses[0][0].isoformat(timespec="minutes") == "19:00"
+
+    def test_lines_carry_how_much_support_they_have(self, api):
+        """The screen sets a dose that is due differently from a guess about
+        lunch. It cannot do that unless the basis reaches it."""
+        call, _ = api
+        call("POST", f"/api/doses?at={AT}", {"at": "19:00"})
+        call("POST", f"/api/event?at={AT}",
+             {"at": "08:15", "sensor": "pill_box", "state": "opened"})
+        _s, day = call("GET", "/api/day?at=2026-08-06T18:40")
+        bases = [r["basis"] for r in day["board"]["rows"]]
+        assert bases[:2] == ["scheduled", "observed"]
+
+
 class TestSensors:
     def test_renaming_the_pill_box_changes_what_is_watched(self, api):
         call, _ = api

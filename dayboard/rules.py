@@ -20,9 +20,21 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from datetime import time as clock_time
 
 from dayboard.claims import Claim, inferred, observed, scheduled
-from dayboard.events import EventLog, logical_date, part_of_day, spoken_time
+from dayboard.events import (
+    DAY_START, EventLog, logical_date, part_of_day, spoken_time,
+)
+
+_ONE_DAY = timedelta(days=1)
+
+# How long before a dose the screen starts naming it, and how long after it
+# keeps naming it. The lead is short because a memory aid that mentions the
+# evening at breakfast has told her something she must then hold on to, which
+# is the one thing she cannot do.
+DOSE_LEAD = timedelta(minutes=90)
+DOSE_GRACE = timedelta(hours=3)
 
 MEAL_WINDOWS = (
     ("breakfast", 6, 11),
@@ -51,6 +63,9 @@ class Home:
     kitchen_sensors: tuple[str, ...] = ("fridge", "kettle", "microwave")
     kitchen_motion: str = "kitchen_motion"
     schedule: list[tuple[datetime, str]] = field(default_factory=list)
+    # When her doses are, as (time of day, what to call it). Empty until
+    # somebody says, and the screen says nothing about doses until then.
+    doses: list[tuple[clock_time, str]] = field(default_factory=list)
 
 
 def _plural_times(moments: list[datetime]) -> str:
@@ -76,6 +91,54 @@ def pill_box_claims(log: EventLog, home: Home, now: datetime) -> list[Claim]:
             f"at {_plural_times(moments)}."
         )
     return [observed(text, moments[-1], (home.pill_box,))]
+
+
+def default_dose_label(at: clock_time) -> str:
+    """What a person calls the dose at this hour."""
+    if at.hour < 12:
+        return "morning"
+    if at.hour < 17:
+        return "afternoon"
+    return "evening"
+
+
+def dose_claims(home: Home, now: datetime) -> list[Claim]:
+    """The dose she is nearest to, said as a time and never as an instruction.
+
+    This is the line that turns the screen from a log into something she can act
+    on. Standing there at seven in the evening, her question is not "what
+    happened today", it is "should I take these now" -- and until this existed
+    the screen could not answer it, because nothing had ever told it what her
+    regimen was.
+
+    It stays inside the rule the rest of the project follows. The dose time is
+    SCHEDULED: a human typed it, exactly like an appointment, and it is never
+    presented as something a sensor saw. What it must never say is whether she
+    has taken them, in either direction. "You have not taken your evening pills"
+    is a claim about something not happening, which no sensor can support and
+    which would push a second dose into someone who had already had one.
+
+    So the screen puts two facts next to each other and lets her do the
+    arithmetic a person can still do:
+
+        Your evening pills are due at 7:00pm.
+        Your pill box was opened at 8:15am.
+
+    Both are true, neither is a guess, and together they answer the question.
+    """
+    day = logical_date(now)
+    for at, label in sorted(home.doses):
+        due = datetime.combine(day, at)
+        if at < DAY_START:
+            # A late dose belongs to the day it was named in, not to the
+            # calendar date, or a 10pm dose would jump days at midnight.
+            due += _ONE_DAY
+        if not (due - DOSE_LEAD <= now <= due + DOSE_GRACE):
+            continue
+        word = "are" if now <= due else "were"
+        name = label or default_dose_label(at)
+        return [scheduled(f"Your {name} pills {word} due at {spoken_time(due)}.", due)]
+    return []
 
 
 def _count_phrase(n: int) -> str:
@@ -141,6 +204,7 @@ def day_heading(now: datetime) -> str:
 
 def all_claims(log: EventLog, home: Home, now: datetime) -> list[Claim]:
     claims: list[Claim] = []
+    claims += dose_claims(home, now)
     claims += pill_box_claims(log, home, now)
     claims += meal_claims(log, home, now)
     claims += door_claims(log, home, now)
